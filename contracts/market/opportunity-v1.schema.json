@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/market/opportunity-v1.schema.json",
+  "title": "Cross-market opportunity v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["buy_venue_id", "sell_venue_id", "instrument_key", "quantity", "net_edge_quote", "state", "created_at", "expires_at"],
+  "properties": {
+    "buy_venue_id": {"type": "string", "minLength": 1},
+    "sell_venue_id": {"type": "string", "minLength": 1},
+    "instrument_key": {"type": "string", "minLength": 1},
+    "quantity": {"type": "string"},
+    "buy_price": {"type": "string"},
+    "sell_price": {"type": "string"},
+    "gross_edge_quote": {"type": "string"},
+    "fees_quote": {"type": "string"},
+    "slippage_quote": {"type": "string"},
+    "other_costs_quote": {"type": "string"},
+    "net_edge_quote": {"type": "string"},
+    "state": {"enum": ["VALIDATED", "BLOCKED", "EXPIRED"]},
+    "blocking_reason": {"type": ["string", "null"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/strategy/order-intent-v1.schema.json",
+  "title": "Strategy order intent v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "account_id",
+    "venue_id",
+    "instrument",
+    "side",
+    "order_type",
+    "quantity",
+    "strategy_id",
+    "strategy_version",
+    "authorization_id",
+    "generated_at"
+  ],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "venue_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "side": {"enum": ["BUY", "SELL"]},
+    "order_type": {"enum": ["LIMIT", "LIMIT_IOC", "MARKET"]},
+    "quantity": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "limit_price": {"type": ["string", "null"]},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "authorization_id": {"type": "string", "minLength": 1},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "reference_price": {"type": ["string", "null"]},
+    "max_slippage_bps": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"}
+  }
+}

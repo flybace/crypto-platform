@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/strategy/signal-v1.schema.json",
+  "title": "Strategy signal v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["signal_id", "strategy_id", "strategy_version", "mode", "account_id", "instrument", "side", "quantity", "limit_price", "reference_price", "generated_at", "expires_at"],
+  "properties": {
+    "signal_id": {"type": "string", "minLength": 1},
+    "strategy_id": {"type": "string", "minLength": 1},
+    "strategy_version": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["observe", "research", "backtest", "paper", "live-pending", "live-enabled", "paused", "stopped"]},
+    "account_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "side": {"enum": ["BUY", "SELL"]},
+    "quantity": {"type": "string"},
+    "limit_price": {"type": "string"},
+    "reference_price": {"type": "string"},
+    "max_slippage_bps": {"type": "string"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

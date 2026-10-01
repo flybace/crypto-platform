@@ -1,0 +1,66 @@
+name: crypto-proxy-stack
+
+services:
+  metacubexd:
+    image: ${PROXY_SERVER_IMAGE:-ghcr.io/metacubex/metacubexd-server:latest}
+    container_name: crypto-proxy-metacubexd
+    restart: unless-stopped
+    environment:
+      CONTROL_TOKEN: '${CONTROL_TOKEN:?Set CONTROL_TOKEN in .env}'
+      CLASH_SECRET: '${CLASH_SECRET:?Set CLASH_SECRET in .env}'
+      DEFAULT_BACKEND_URL: '${DEFAULT_BACKEND_URL:-http://192.168.68.99:17990}'
+      CONTROL_PORT: '8080'
+      CLASH_API_PORT: '9090'
+      MIXED_PORT: '7890'
+      # The route manager writes the rendered profile and provider/rule caches
+      # into the shared volume. Mihomo rejects absolute paths outside its
+      # allowed roots unless SAFE_PATHS includes them.
+      SAFE_PATHS: '/data:/shared'
+      TZ: '${TZ:-Asia/Shanghai}'
+    ports:
+      - '${PROXY_BIND_ADDRESS:-192.168.68.99}:17880:8080'
+      - '${PROXY_BIND_ADDRESS:-192.168.68.99}:17990:9090'
+      - '${PROXY_BIND_ADDRESS:-192.168.68.99}:17890:7890'
+    volumes:
+      - './data/mihomo:/data'
+      - './data/shared:/shared'
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://127.0.0.1:8080/api/control/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  route-manager:
+    build:
+      context: ./route-manager
+    container_name: crypto-proxy-route-manager
+    restart: unless-stopped
+    environment:
+      ROUTE_MANAGER_DATA_DIR: /data
+      ROUTE_MANAGER_SHARED_DIR: /shared
+      MIHOMO_CONTROLLER_URL: http://metacubexd:9090
+      MIHOMO_SECRET: '${CLASH_SECRET:?Set CLASH_SECRET in .env}'
+      ROUTE_MANAGER_APPLY_MODE: '${ROUTE_MANAGER_APPLY_MODE:-dry-run}'
+      ROUTE_MANAGER_CAPTURE_POLL_SECONDS: '${ROUTE_MANAGER_CAPTURE_POLL_SECONDS:-5}'
+      DISCOVERY_HTTP_PROXY: '${DISCOVERY_HTTP_PROXY:-}'
+      PUBLIC_HOST: '${PUBLIC_HOST:-192.168.68.99}'
+      PUBLIC_PROXY_PORT: '${PUBLIC_PROXY_PORT:-17890}'
+      PUBLIC_MANAGER_PORT: '${PUBLIC_MANAGER_PORT:-17881}'
+      PUBLIC_DASHBOARD_PORT: '${PUBLIC_DASHBOARD_PORT:-17880}'
+      PUBLIC_API_PORT: '${PUBLIC_API_PORT:-17990}'
+      TZ: '${TZ:-Asia/Shanghai}'
+    depends_on:
+      metacubexd:
+        condition: service_healthy
+    ports:
+      - '${ROUTE_MANAGER_BIND_ADDRESS:-192.168.68.99}:17881:8080'
+    volumes:
+      - './data/route-manager:/data'
+      - './data/shared:/shared'
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=2)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

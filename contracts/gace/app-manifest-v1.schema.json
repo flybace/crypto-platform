@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/gace/app-manifest-v1.schema.json",
+  "title": "GACE app manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["app_id", "app_version", "runtime", "permissions", "network_allowlist", "actions"],
+  "properties": {
+    "app_id": {"type": "string", "minLength": 1},
+    "app_version": {"type": "string", "minLength": 1},
+    "runtime": {"enum": ["web-service", "multi-container-app"]},
+    "permissions": {"type": "array", "items": {"type": "string"}},
+    "network_allowlist": {"type": "array", "items": {"type": "string"}},
+    "actions": {"type": "array", "items": {"type": "string"}}
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/execution/ledger-entry-v1.schema.json",
+  "title": "Ledger entry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entry_id", "account_id", "venue_id", "asset", "delta", "event_type", "occurred_at"],
+  "properties": {
+    "entry_id": {"type": "string", "minLength": 1},
+    "account_id": {"type": "string", "minLength": 1},
+    "venue_id": {"type": "string", "minLength": 1},
+    "asset": {"type": "string", "minLength": 1},
+    "delta": {"type": "string"},
+    "event_type": {"type": "string", "minLength": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "external_ref": {"type": ["string", "null"]}
+  }
+}

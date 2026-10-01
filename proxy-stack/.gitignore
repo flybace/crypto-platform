@@ -1,0 +1,5 @@
+.env
+data/
+route-manager/data/
+route-manager/.pytest_cache/
+route-manager/**/__pycache__/

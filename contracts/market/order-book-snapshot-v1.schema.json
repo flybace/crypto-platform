@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/market/order-book-snapshot-v1.schema.json",
+  "title": "Order book snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument", "bids", "asks", "exchange_timestamp", "received_timestamp", "sequence"],
+  "properties": {
+    "instrument": {"type": "string", "minLength": 1},
+    "bids": {"type": "array", "items": {"$ref": "#/$defs/level"}},
+    "asks": {"type": "array", "items": {"$ref": "#/$defs/level"}},
+    "exchange_timestamp": {"type": "string", "format": "date-time"},
+    "received_timestamp": {"type": "string", "format": "date-time"},
+    "sequence": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["price", "quantity"],
+      "properties": {
+        "price": {"type": "string"},
+        "quantity": {"type": "string"}
+      }
+    }
+  }
+}

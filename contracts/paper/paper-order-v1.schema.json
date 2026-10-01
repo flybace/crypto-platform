@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/paper/paper-order-v1.schema.json",
+  "title": "Paper order event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["paper_account_id", "request_id", "instrument", "side", "quantity", "status", "event_at"],
+  "properties": {
+    "paper_account_id": {"type": "string", "minLength": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "instrument": {"type": "string", "minLength": 1},
+    "side": {"enum": ["BUY", "SELL"]},
+    "quantity": {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?$"},
+    "status": {"enum": ["ACCEPTED", "PARTIALLY_FILLED", "FILLED", "CANCELED", "EXPIRED"]},
+    "event_at": {"type": "string", "format": "date-time"}
+  }
+}

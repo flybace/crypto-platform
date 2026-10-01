@@ -1,0 +1,16 @@
+.git
+.pytest_cache
+__pycache__
+.venv
+venv
+data
+runtime
+logs
+*.sqlite
+*.db
+*.parquet
+*.ndjson
+*.jsonl
+tests
+docs
+README.md

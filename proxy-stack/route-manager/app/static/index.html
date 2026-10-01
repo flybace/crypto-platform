@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>Proxy Route Manager</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <a class="brand" href="#overview" aria-label="Proxy Route Manager 概览">
+          <span class="brand-mark">PR</span>
+          <span>
+            <strong>Proxy Route Manager</strong>
+            <small>节点与策略控制台</small>
+          </span>
+        </a>
+        <nav class="main-nav" aria-label="主导航">
+          <a class="nav-link" data-route="overview" href="#overview">概览</a>
+          <a class="nav-link" data-route="subscriptions" href="#subscriptions">订阅与规则</a>
+          <a class="nav-link" data-route="discovery" href="#discovery">添加网址</a>
+        </nav>
+        <div class="top-actions">
+          <a id="metacubexd-link" class="dashboard-link" href="http://192.168.68.99:17880" target="_blank" rel="noopener">MetaCubeXD</a>
+          <span id="core-status" class="status-chip status-neutral">核心检查中</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="page-heading" aria-labelledby="page-title">
+        <div>
+          <p id="page-kicker" class="kicker">00 / OVERVIEW</p>
+          <h1 id="page-title">代理入口</h1>
+          <p id="page-description" class="page-description">查看局域网代理地址，以及已经确认会走指定策略的服务网址。</p>
+        </div>
+        <div class="heading-note">
+          <span class="heading-dot"></span>
+          <span>订阅只提供节点，规则由本机管理</span>
+        </div>
+      </section>
+
+      <section id="overview-view" class="route-view" data-view="overview">
+        <section id="access-panel" class="panel access-panel" aria-labelledby="access-title">
+          <div class="panel-heading access-heading">
+            <div>
+              <p class="kicker">01 / ACCESS</p>
+              <h2 id="access-title">代理入口</h2>
+              <p class="panel-copy">这些地址绑定在 192.168.68.99，可供本机和同一局域网设备使用。</p>
+            </div>
+            <span id="access-status" class="status-chip status-neutral" aria-live="polite">检查中</span>
+          </div>
+          <div class="access-grid">
+            <article class="access-item">
+              <div class="access-item-head"><strong>HTTP 代理</strong><span>浏览器 / HTTP 客户端</span></div>
+              <div class="access-address-row">
+                <code id="access-http">读取中…</code>
+                <button class="button button-quiet copy-access" data-copy-target="access-http" type="button">复制</button>
+              </div>
+            </article>
+            <article class="access-item">
+              <div class="access-item-head"><strong>SOCKS5 代理</strong><span>支持 SOCKS5 的客户端</span></div>
+              <div class="access-address-row">
+                <code id="access-socks5">读取中…</code>
+                <button class="button button-quiet copy-access" data-copy-target="access-socks5" type="button">复制</button>
+              </div>
+            </article>
+            <article class="access-item">
+              <div class="access-item-head"><strong>管理页面</strong><span>本控制台</span></div>
+              <div class="access-address-row">
+                <code id="access-manager">读取中…</code>
+                <a id="access-manager-open" class="button button-quiet" href="#" target="_blank" rel="noopener">打开</a>
+              </div>
+            </article>
+            <article class="access-item">
+              <div class="access-item-head"><strong>MetaCubeXD</strong><span>策略组与规则观察</span></div>
+              <div class="access-address-row">
+                <code id="access-dashboard">读取中…</code>
+                <a id="access-dashboard-open" class="button button-quiet" href="#" target="_blank" rel="noopener">打开</a>
+              </div>
+            </article>
+            <article class="access-item">
+              <div class="access-item-head"><strong>Clash API</strong><span>控制接口 · 需要密钥</span></div>
+              <div class="access-address-row">
+                <code id="access-api">读取中…</code>
+                <button class="button button-quiet copy-access" data-copy-target="access-api" type="button">复制</button>
+              </div>
+            </article>
+          </div>
+          <div id="access-meta" class="access-meta" aria-live="polite">正在检查 Mihomo 的局域网监听状态…</div>
+        </section>
+
+        <section class="panel defined-panel" aria-labelledby="defined-title">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">02 / DEFINED ROUTES</p>
+              <h2 id="defined-title">已定义网址</h2>
+              <p class="panel-copy">这里显示已确认的服务和它们包含的域名。订阅、规则源和候选域名在其他菜单管理。</p>
+            </div>
+            <span id="service-count" class="count-badge">0</span>
+          </div>
+          <div id="service-list" class="service-list"></div>
+          <div class="panel-footer-link">
+            <a class="text-link" href="#discovery">去添加或确认网址规则 <span aria-hidden="true">→</span></a>
+          </div>
+        </section>
+      </section>
+
+      <section id="subscriptions-view" class="route-view" data-view="subscriptions" hidden>
+        <div class="section-intro">
+          <div>
+            <p class="kicker">01 / SUBSCRIPTIONS</p>
+            <h2>节点订阅与规则</h2>
+            <p>添加订阅时只读取节点。订阅自带的 rules、proxy-groups、DNS 和 TUN 不会覆盖本机策略。</p>
+          </div>
+          <span id="provider-count" class="count-badge">0 个节点源</span>
+        </div>
+
+        <div class="two-panel-grid">
+          <section class="panel" aria-labelledby="provider-title">
+            <div class="panel-heading">
+              <div>
+                <p class="kicker">02 / PROVIDERS</p>
+                <h2 id="provider-title">添加节点订阅</h2>
+              </div>
+              <span class="panel-index">节点</span>
+            </div>
+            <form id="provider-form" class="stack-form">
+              <div class="two-col">
+                <label>
+                  <span>ID</span>
+                  <input id="provider-id" name="id" placeholder="provider-a" required />
+                </label>
+                <label>
+                  <span>名称</span>
+                  <input id="provider-name" name="name" placeholder="供应商 A" required />
+                </label>
+              </div>
+              <label>
+                <span>订阅地址</span>
+                <input id="provider-url" name="url" type="url" placeholder="https://..." required />
+              </label>
+              <div class="two-col">
+                <label>
+                  <span>运行组名</span>
+                  <input id="provider-group" name="group" placeholder="PROVIDER_A" />
+                </label>
+                <label>
+                  <span>更新间隔 / 秒</span>
+                  <input id="provider-interval" name="interval" type="number" min="300" value="86400" required />
+                </label>
+              </div>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit">保存节点源</button>
+              </div>
+            </form>
+            <div id="provider-list" class="entity-list"></div>
+          </section>
+
+          <section class="panel" aria-labelledby="policy-title">
+            <div class="panel-heading">
+              <div>
+                <p class="kicker">03 / POLICY IMPORT</p>
+                <h2 id="policy-title">导入策略与规则</h2>
+              </div>
+              <span class="panel-index">规则</span>
+            </div>
+            <p class="panel-copy policy-note">导入你原来的 Clash 配置时，只接收策略组、规则源和规则；原配置里的节点会被忽略，当前订阅节点继续使用。</p>
+            <form id="policy-import-form" class="stack-form compact-form">
+              <label>
+                <span>Clash YAML</span>
+                <input id="policy-import-file" type="file" accept=".yaml,.yml,text/yaml" required />
+              </label>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit">导入策略与规则</button>
+                <span id="policy-import-status" class="service-meta">当前使用默认规则</span>
+              </div>
+            </form>
+            <div class="subsection-heading">
+              <div>
+                <span class="section-label">当前规则源</span>
+                <p class="section-helper">默认规则会参与生成配置；服务规则优先于默认规则。</p>
+              </div>
+              <button class="button button-quiet" id="check-rules" type="button">检查规则源</button>
+            </div>
+            <div id="rule-check-message" class="inline-message" aria-live="polite">默认规则源等待检查。</div>
+            <div id="rule-source-list" class="rule-source-list"></div>
+          </section>
+        </div>
+
+        <section class="panel preview-panel" aria-labelledby="preview-title">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">04 / REVIEW & APPLY</p>
+              <h2 id="preview-title">配置草稿</h2>
+              <p class="panel-copy">先生成预览确认规则和策略组，再保存草稿；只有 controller 模式才会直接应用到 Mihomo。</p>
+            </div>
+            <div class="preview-actions">
+              <span id="apply-mode" class="mode-note">DRY RUN</span>
+              <button class="button button-quiet" id="preview-config" type="button">生成预览</button>
+              <button class="button button-primary" id="apply-config" type="button">保存草稿</button>
+            </div>
+          </div>
+          <div id="preview-warnings" class="warning-list" aria-live="polite"></div>
+          <div class="digest-line"><span>SHA-256</span><code id="preview-digest">尚未生成</code></div>
+          <pre id="config-preview" class="config-preview">尚未生成配置草稿。</pre>
+        </section>
+      </section>
+
+      <section id="discovery-view" class="route-view" data-view="discovery" hidden>
+        <div class="section-intro discovery-intro">
+          <div>
+            <p class="kicker">01 / ADD URL</p>
+            <h2>添加网址</h2>
+            <p>添加后自动绑定出口，后台继续补充依赖域名和 IP。</p>
+          </div>
+          <span class="status-chip status-neutral">后台分析</span>
+        </div>
+
+        <section class="panel analysis-panel" aria-labelledby="analysis-title">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">02 / ROUTE</p>
+              <h2 id="analysis-title">新建网址策略</h2>
+              <p class="panel-copy">主域名立即加入；节点测速、内容探测和 DNS 发现不会阻塞当前页面。</p>
+            </div>
+            <span id="analysis-status" class="status-chip status-neutral">尚未开始</span>
+          </div>
+          <form id="analysis-form" class="stack-form add-url-form">
+            <div class="add-url-grid">
+              <label>
+                <span>网址</span>
+                <input id="analysis-url" name="url" type="url" placeholder="https://www.example.com" autocomplete="url" required />
+              </label>
+              <label>
+                <span>名称 <small>可选</small></span>
+                <input id="analysis-service-name" name="service_name" placeholder="自动使用域名" autocomplete="off" />
+              </label>
+            </div>
+            <fieldset class="route-choice">
+              <legend>出口</legend>
+              <div class="choice-grid">
+                <label class="choice-card">
+                  <input type="radio" name="selection_mode" value="auto" checked />
+                  <span class="choice-card-body"><strong>自动选择</strong><small>找到可用节点后自动绑定</small></span>
+                </label>
+                <label class="choice-card">
+                  <input type="radio" name="selection_mode" value="manual" />
+                  <span class="choice-card-body"><strong>手动选择</strong><small>直接指定节点或策略组</small></span>
+                </label>
+              </div>
+              <div id="manual-target-wrap" class="manual-target-wrap" hidden>
+                <label>
+                  <span>指定出口</span>
+                  <select id="analysis-manual-target" aria-label="指定节点或策略组"></select>
+                </label>
+              </div>
+            </fieldset>
+            <details class="advanced-settings">
+              <summary>高级选项</summary>
+              <label>
+                <span>成功状态码</span>
+                <input id="analysis-status-code" name="expected_status" type="number" min="100" max="599" value="200" required />
+              </label>
+            </details>
+            <div class="form-actions">
+              <button id="start-analysis" class="button button-primary" type="submit">添加网址</button>
+              <span id="analysis-message" class="inline-message" aria-live="polite">添加后自动处理。</span>
+            </div>
+          </form>
+          <details id="analysis-detail-panel" class="analysis-details" hidden>
+            <summary>查看后台详情 <span id="analysis-detail-state" class="status-chip status-neutral">尚未开始</span></summary>
+          <div id="analysis-progress" class="analysis-progress" hidden>
+            <div class="analysis-progress-head"><strong id="analysis-phase">准备中</strong><span id="analysis-progress-count">0 / 0</span></div>
+            <div class="progress-track"><span id="analysis-progress-bar"></span></div>
+          </div>
+          <div id="analysis-recommendation" class="analysis-recommendation" hidden></div>
+          <div class="analysis-node-table table-wrap">
+            <table>
+              <thead>
+                <tr><th>节点</th><th>状态</th><th>延迟</th><th>评分</th><th>说明</th></tr>
+              </thead>
+              <tbody id="analysis-node-table"></tbody>
+            </table>
+          </div>
+          <div id="analysis-probe-actions" class="analysis-actions" hidden>
+            <button id="probe-analysis" class="button button-primary" type="button">通过推荐节点分析网址</button>
+            <span id="analysis-probe-note" class="section-helper">会临时切换出口，完成后恢复原选择。</span>
+          </div>
+          <div id="analysis-candidate-panel" class="analysis-candidate-panel" hidden>
+            <div class="subsection-heading">
+              <div>
+                <span class="section-label">候选确认</span>
+                <p id="analysis-candidate-summary" class="section-helper">选择要进入服务策略的候选。</p>
+              </div>
+              <span id="analysis-candidate-count" class="count-badge">0</span>
+            </div>
+            <div id="analysis-candidate-list" class="analysis-candidate-list"></div>
+            <div class="analysis-draft-actions">
+              <label>
+                <span>写入服务</span>
+                <select id="analysis-service-select"></select>
+              </label>
+              <button id="draft-analysis" class="button button-primary" type="button">加入服务规则草稿</button>
+            </div>
+          </div>
+          </details>
+        </section>
+
+        <section class="panel defined-panel services-panel" aria-labelledby="my-services-title">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">03 / MY ROUTES</p>
+              <h2 id="my-services-title">我的网址</h2>
+              <p class="panel-copy">这里显示当前策略和后台处理状态。</p>
+            </div>
+            <span id="discovery-service-count" class="count-badge">0</span>
+          </div>
+          <div id="discovery-service-list" class="service-list"></div>
+        </section>
+
+        <details class="advanced-tools">
+          <summary>高级：候选、连接和手动规则</summary>
+        <div class="two-panel-grid discovery-grid">
+          <section class="panel" aria-labelledby="discover-title">
+            <div class="panel-heading">
+              <div>
+                <p class="kicker">03 / QUICK OBSERVE</p>
+                <h2 id="discover-title">快速观察</h2>
+              </div>
+              <span class="panel-index">候选</span>
+            </div>
+            <form id="discover-form" class="stack-form">
+              <label>
+                <span>网址</span>
+                <input id="discover-url" name="url" type="url" placeholder="https://www.example.com" required />
+              </label>
+              <div class="form-actions">
+                <button class="button button-primary" type="submit">开始发现</button>
+                <button class="button button-quiet" id="sync-connections" type="button">同步当前连接</button>
+              </div>
+            </form>
+            <div id="discover-message" class="inline-message" aria-live="polite">可从 URL 静态引用和 Mihomo 连接中收集候选。</div>
+            <div class="catalog-block">
+              <div class="section-label">常用服务种子</div>
+              <div id="catalog-list" class="catalog-list"></div>
+            </div>
+          </section>
+
+          <section class="panel" aria-labelledby="service-title">
+            <div class="panel-heading">
+              <div>
+                <p class="kicker">04 / SERVICE</p>
+                <h2 id="service-title">定义服务出口</h2>
+              </div>
+              <span class="panel-index">策略组</span>
+            </div>
+            <form id="service-form" class="stack-form compact-form">
+              <div class="two-col">
+                <label><span>ID</span><input id="service-id" placeholder="binance-public" required /></label>
+                <label><span>名称</span><input id="service-name" placeholder="Binance 公共行情" required /></label>
+              </div>
+              <div class="two-col">
+                <label><span>范围</span><input id="service-scope" value="public-market" required /></label>
+                <label><span>默认出口</span><input id="service-target" value="PROXY" list="proxy-targets" required /></label>
+              </div>
+              <datalist id="proxy-targets"></datalist>
+              <button class="button button-primary" type="submit">保存服务策略</button>
+            </form>
+          </section>
+        </div>
+
+        <section class="panel observations-panel" aria-labelledby="observation-title">
+          <div class="panel-heading">
+            <div>
+              <p class="kicker">05 / OBSERVE</p>
+              <h2 id="observation-title">待确认域名</h2>
+              <p class="panel-copy">每个候选都要选择服务和匹配方式。确认后才会写入服务策略组。</p>
+            </div>
+            <span id="observation-count" class="count-badge">0</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>域名</th><th>来源</th><th>命中</th><th>操作</th></tr>
+              </thead>
+              <tbody id="observation-table"></tbody>
+            </table>
+          </div>
+        </section>
+        <label class="capture-toggle">
+          <input id="capture-toggle" type="checkbox" />
+          <span>观察当前连接</span>
+        </label>
+        </details>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

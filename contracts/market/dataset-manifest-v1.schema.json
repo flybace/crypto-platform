@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/market/dataset-manifest-v1.schema.json",
+  "title": "Historical dataset manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dataset_id", "venue_id", "market_type", "instrument_key", "data_level", "start_at", "end_at", "file_format", "source", "row_count", "content_sha256"],
+  "properties": {
+    "dataset_id": {"type": "string", "minLength": 1},
+    "venue_id": {"type": "string", "minLength": 1},
+    "market_type": {"enum": ["spot", "margin", "perpetual", "futures", "dex"]},
+    "instrument_key": {"type": "string", "minLength": 1},
+    "data_level": {"enum": ["KLINE", "TRADE", "L1", "L2"]},
+    "start_at": {"type": "string", "format": "date-time"},
+    "end_at": {"type": "string", "format": "date-time"},
+    "file_format": {"type": "string", "minLength": 1},
+    "source": {"type": "string", "minLength": 1},
+    "row_count": {"type": "integer", "minimum": 0},
+    "content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "gap_count": {"type": "integer", "minimum": 0},
+    "duplicate_count": {"type": "integer", "minimum": 0}
+  }
+}

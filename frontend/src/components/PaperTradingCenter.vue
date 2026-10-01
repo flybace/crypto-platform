@@ -1,0 +1,359 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue';
+import { AlertTriangle, BriefcaseBusiness, CircleDollarSign, FlaskConical, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck } from 'lucide-vue-next';
+import { api } from '../api';
+import type { HistoryCoverage, HistoryDataset, PaperAccountSummary, PaperAutomation, PaperOrder, PaperSummary, QueuedTaskResponse, StrategyDefinition } from '../types';
+import { isQueuedTask, resolveTaskResponse, taskStatusLabel } from '../services/taskPolling';
+
+const summary = ref<PaperSummary | null>(null);
+const orders = ref<PaperOrder[]>([]);
+const strategyRuns = ref<any[]>([]);
+const strategies = ref<StrategyDefinition[]>([]);
+const datasets = ref<HistoryDataset[]>([]);
+const selectedDatasetId = ref('');
+const side = ref<'BUY' | 'SELL'>('SELL');
+const quantity = ref('0.01');
+const limitPrice = ref('');
+const loading = ref(false);
+const submitting = ref(false);
+const strategyRunning = ref(false);
+const resetting = ref(false);
+const error = ref('');
+const notice = ref('');
+const taskMessage = ref('');
+const strategyId = ref('sma_cross');
+const automationRunning = ref(false);
+const automationSaving = ref(false);
+const automationDatasetId = ref('');
+const automationForm = ref<PaperAutomation>({
+  enabled: false,
+  venue_id: 'binance',
+  symbol: 'BTC/USDT',
+  interval: '1h',
+  strategy_id: 'sma_cross',
+  initial_quote: '10000',
+  initial_base: '0',
+  fee_bps: '10',
+  slippage_bps: '5',
+  fast_window: 10,
+  slow_window: 30,
+  allocation_ratio: '1',
+  momentum_threshold_pct: '0.02',
+  strategy_parameters: {},
+  last_run_id: null,
+  updated_at: null,
+});
+
+const tradableDatasets = computed(() => datasets.value.filter((dataset) => dataset.interval === '1h' && dataset.gap_count === 0 && dataset.duplicate_count === 0));
+const selectedDataset = computed(() => datasets.value.find((dataset) => dataset.dataset_id === selectedDatasetId.value) || tradableDatasets.value[0] || null);
+const automationDatasets = computed(() => datasets.value.filter((dataset) => dataset.gap_count === 0 && dataset.duplicate_count === 0));
+const positions = computed(() => summary.value?.positions || []);
+const accountItems = computed(() => summary.value?.accounts || []);
+const formatNumber = (value: string | number, maximumFractionDigits = 6) => new Intl.NumberFormat('en-US', { maximumFractionDigits }).format(Number(value));
+const formatDate = (value: string) => new Date(value).toLocaleString('zh-CN', { timeZone: 'UTC', hour12: false });
+const statusLabel = (value: string) => ({ FILLED: '已成交', PARTIALLY_FILLED: '部分成交', OPEN: '挂单中', CANCELED: '已撤销', REJECTED: '已拒绝' }[value] || value);
+
+const datasetSymbol = (dataset: HistoryDataset | null) => dataset?.instrument_key.split(':').pop() || '';
+const venueLabel = (venueId: string) => ({ binance: 'Binance', okx: 'OKX', bybit: 'Bybit' }[venueId] || venueId.toUpperCase());
+const accountPosition = (account: PaperAccountSummary, asset: string) => account.positions.find((item) => item.asset === asset);
+const accountMark = (account: PaperAccountSummary, asset: string) => {
+  const markPrice = accountPosition(account, asset)?.mark_price;
+  return markPrice ? '≈ ' + formatNumber(markPrice, 4) + ' USDT' : '余额';
+};
+const resetLabel = (venueId: string) => '重置 ' + venueLabel(venueId) + ' 模拟账户';
+
+const loadData = async () => {
+  loading.value = true;
+  error.value = '';
+  try {
+    const [summaryResponse, orderResponse, coverageResponse, strategyRunResponse, strategyResponse, automationResponse] = await Promise.all([
+      api.get<PaperSummary>('/paper/summary'),
+      api.get<{ items: PaperOrder[] }>('/paper/orders'),
+      api.get<HistoryCoverage>('/history/coverage'),
+      api.get<{ items: any[] }>('/paper/strategy-runs'),
+      api.get<{ items: StrategyDefinition[] }>('/strategies/catalog'),
+      api.get<PaperAutomation>('/paper/automation'),
+    ]);
+    summary.value = summaryResponse.data;
+    orders.value = orderResponse.data.items;
+    strategyRuns.value = strategyRunResponse.data.items;
+    strategies.value = strategyResponse.data.items;
+    datasets.value = coverageResponse.data.datasets;
+    automationForm.value = automationResponse.data;
+    const configuredDataset = automationDatasets.value.find((dataset) => (
+      dataset.venue_id === automationForm.value.venue_id
+      && dataset.interval === automationForm.value.interval
+      && dataset.instrument_key.split(':').pop() === automationForm.value.symbol
+    ));
+    automationDatasetId.value = configuredDataset?.dataset_id || automationDatasets.value[0]?.dataset_id || '';
+    if (!selectedDatasetId.value || !tradableDatasets.value.some((item) => item.dataset_id === selectedDatasetId.value)) selectedDatasetId.value = tradableDatasets.value[0]?.dataset_id || '';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '模拟盘状态读取失败';
+  } finally {
+    loading.value = false;
+  }
+};
+
+const applyAutomationDataset = () => {
+  const dataset = automationDatasets.value.find((item) => item.dataset_id === automationDatasetId.value);
+  if (!dataset) return;
+  automationForm.value.venue_id = dataset.venue_id;
+  automationForm.value.symbol = dataset.instrument_key.split(':').pop() || dataset.native_symbol;
+  automationForm.value.interval = dataset.interval;
+};
+
+const saveAutomation = async () => {
+  automationSaving.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const { data } = await api.put<PaperAutomation>('/paper/automation', automationForm.value);
+    automationForm.value = data;
+    notice.value = '模拟自动回放配置已保存';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '模拟自动回放配置保存失败';
+  } finally {
+    automationSaving.value = false;
+  }
+};
+
+const runAutomation = async () => {
+  automationRunning.value = true;
+  error.value = '';
+  notice.value = '';
+  taskMessage.value = '';
+  try {
+    const response = await api.post<{ automation: PaperAutomation; run: any } | QueuedTaskResponse>('/paper/automation/run');
+    let data: { automation: PaperAutomation; run: any };
+    if (isQueuedTask(response.data)) {
+      taskMessage.value = `模拟自动回放已排队 · ${response.data.task_id}`;
+      data = await resolveTaskResponse<{ automation: PaperAutomation; run: any }>(response.data, {
+        onUpdate: (task) => { taskMessage.value = `模拟自动回放${taskStatusLabel(task.status)}`; },
+      });
+      await loadData();
+      taskMessage.value = '模拟自动回放已完成，结果已重新载入';
+    } else {
+      data = response.data;
+    }
+    automationForm.value = data.automation;
+    strategyRuns.value = [data.run, ...strategyRuns.value.filter((item) => item.run_id !== data.run.run_id)];
+    notice.value = `模拟自动回放完成 · ${data.run.orders} 次交易 · ${formatNumber(data.run.total_return_pct, 3)}%`;
+  } catch (cause: any) {
+    taskMessage.value = '';
+    error.value = cause.response?.data?.detail || '模拟自动回放失败';
+  } finally {
+    automationRunning.value = false;
+  }
+};
+
+const runStrategy = async () => {
+  if (!selectedDataset.value) {
+    error.value = '没有质量通过的小时线数据集';
+    return;
+  }
+  strategyRunning.value = true;
+  error.value = '';
+  notice.value = '';
+  taskMessage.value = '';
+  try {
+    const response = await api.post<any | QueuedTaskResponse>('/paper/strategy-runs', {
+      venue_id: selectedDataset.value.venue_id,
+      symbol: datasetSymbol(selectedDataset.value),
+      interval: selectedDataset.value.interval,
+      strategy_id: strategyId.value,
+      fee_bps: summary.value?.fee_bps || '10',
+      slippage_bps: '5',
+    });
+    let data: any;
+    if (isQueuedTask(response.data)) {
+      taskMessage.value = `模拟策略回放已排队 · ${response.data.task_id}`;
+      data = await resolveTaskResponse<any>(response.data, {
+        onUpdate: (task) => { taskMessage.value = `模拟策略回放${taskStatusLabel(task.status)}`; },
+      });
+      await loadData();
+      taskMessage.value = '模拟策略回放已完成，结果已重新载入';
+    } else {
+      data = response.data;
+    }
+    strategyRuns.value = [data, ...strategyRuns.value.filter((item) => item.run_id !== data.run_id)];
+    notice.value = `模拟策略回放完成 · ${data.orders} 次交易 · ${formatNumber(data.total_return_pct, 3)}%`;
+  } catch (cause: any) {
+    taskMessage.value = '';
+    error.value = cause.response?.data?.detail || '模拟策略回放失败';
+  } finally {
+    strategyRunning.value = false;
+  }
+};
+
+const submitOrder = async () => {
+  if (!selectedDataset.value) {
+    error.value = '没有质量通过的小时线数据集';
+    return;
+  }
+  submitting.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const { data } = await api.post<PaperOrder>('/paper/orders', {
+      venue_id: selectedDataset.value.venue_id,
+      symbol: datasetSymbol(selectedDataset.value),
+      interval: selectedDataset.value.interval,
+      side: side.value,
+      quantity: quantity.value,
+      limit_price: limitPrice.value || null,
+    });
+    orders.value = [data, ...orders.value.filter((item) => item.order_id !== data.order_id)];
+    notice.value = `${data.side === 'SELL' ? '卖出' : '买入'}${statusLabel(data.status)} · ${data.filled_quantity} ${data.symbol.split('/')[0]}`;
+    await loadData();
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '模拟订单提交失败';
+  } finally {
+    submitting.value = false;
+  }
+};
+
+const resetAccount = async (venueId?: string) => {
+  resetting.value = true;
+  error.value = '';
+  try {
+    await api.post('/paper/reset', venueId ? { venue_id: venueId } : {});
+    notice.value = venueId ? venueLabel(venueId) + ' 模拟账户已重置' : '全部模拟账户已重置为演示余额';
+    await loadData();
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '模拟账户重置失败';
+  } finally {
+    resetting.value = false;
+  }
+};
+
+onMounted(loadData);
+</script>
+
+<template>
+  <section class="paper-center" aria-labelledby="paper-title">
+    <section class="page-heading paper-heading"><div><p class="kicker">SIMULATION DESK / 08</p><h1 id="paper-title">模拟盘</h1><p class="muted">使用已校验小时线和 L2 撮合器运行隔离的虚拟账户，余额与真实交易完全分离。</p></div><div class="paper-actions"><span class="heading-stamp"><ShieldCheck :size="14" /> 真实执行关闭</span><button class="icon-button" type="button" title="刷新模拟盘" aria-label="刷新模拟盘" :disabled="loading" @click="loadData"><RefreshCw :size="17" :class="{ spinning: loading }" /></button></div></section>
+    <div v-if="error" class="inline-error" role="alert">{{ error }}</div><div v-if="notice" class="inline-notice" role="status">{{ notice }}</div>
+    <div v-if="taskMessage" class="inline-notice" role="status" aria-live="polite">{{ taskMessage }}</div>
+    <section class="paper-banner"><AlertTriangle :size="17" /><div><strong>模拟环境</strong><span>所有订单只写入内存模拟账户，服务端真实执行模式为 DISABLED。</span></div></section>
+    <section class="paper-panel automation-panel" aria-labelledby="paper-automation-title"><div class="section-heading"><div><p class="kicker">PAPER AUTOMATION</p><h2 id="paper-automation-title">自动策略回放</h2></div><Play :size="18" class="section-icon" /></div><div class="automation-form"><label><span>历史数据集</span><select v-model="automationDatasetId" @change="applyAutomationDataset"><option v-for="dataset in automationDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.interval }} · {{ dataset.row_count }} 根</option></select></label><label><span>策略</span><select v-model="automationForm.strategy_id"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><label class="automation-check"><input v-model="automationForm.enabled" type="checkbox" /><span>允许手动触发</span></label><button class="secondary-button" type="button" :disabled="automationSaving" @click="saveAutomation"><Save v-if="!automationSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ automationSaving ? '保存中' : '保存配置' }}</span></button><button class="paper-submit" type="button" :disabled="automationRunning || !automationForm.enabled || !automationDatasetId" @click="runAutomation"><Play v-if="!automationRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ automationRunning ? '运行中' : '立即回放' }}</span></button></div><p class="paper-note"><ShieldCheck :size="13" /> 仅在当前服务中执行历史策略回放，不提交交易所订单，不改变模拟账户余额。</p></section>
+    <section class="paper-metrics" aria-label="模拟盘摘要"><article><span>模拟净值</span><strong>{{ summary ? formatNumber(summary.equity_quote, 2) : '—' }}</strong><em>USDT</em></article><article><span>基础资产</span><strong>{{ positions.length }}</strong><em>有余额的币种</em></article><article><span>已提交订单</span><strong>{{ summary?.order_count ?? 0 }}</strong><em>模拟撮合记录</em></article><article><span>策略回放</span><strong>{{ summary?.strategy_run_count ?? strategyRuns.length }}</strong><em>历史样本运行</em></article><article><span>费率</span><strong>{{ summary?.fee_bps || '10' }}</strong><em>bps</em></article></section>
+
+    <section class="paper-panel strategy-replay-panel" aria-labelledby="paper-strategy-title"><div class="section-heading"><div><p class="kicker">PAPER STRATEGY REPLAY</p><h2 id="paper-strategy-title">模拟策略回放</h2></div><FlaskConical :size="18" class="section-icon" /></div><div class="replay-form"><label><span>历史数据集</span><select v-model="selectedDatasetId"><option v-for="dataset in tradableDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.row_count }} 根</option></select></label><label><span>策略</span><select v-model="strategyId"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><button class="paper-submit" type="button" :disabled="strategyRunning || !selectedDataset" @click="runStrategy"><FlaskConical v-if="!strategyRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ strategyRunning ? '回放中' : '运行策略回放' }}</span></button></div><p class="paper-note"><CircleDollarSign :size="13" /> 回放结果只写入模拟研究记录，不改变虚拟账户余额。</p></section>
+
+    <section class="paper-layout">
+      <section class="paper-panel order-panel" aria-labelledby="paper-order-title"><div class="section-heading"><div><p class="kicker">PAPER ORDER</p><h2 id="paper-order-title">提交模拟订单</h2></div><Send :size="18" class="section-icon" /></div><form class="paper-form" @submit.prevent="submitOrder"><label><span>行情数据集</span><select v-model="selectedDatasetId"><option v-for="dataset in tradableDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.row_count }} 根</option></select></label><label><span>方向</span><select v-model="side"><option value="SELL">卖出</option><option value="BUY">买入</option></select></label><label><span>数量</span><input v-model="quantity" type="number" min="0.000001" step="0.000001" required /></label><label><span>限价（留空按 IOC 参考价）</span><input v-model="limitPrice" type="number" min="0" step="0.00000001" placeholder="自动使用尾部收盘附近价格" /></label><button class="paper-submit" type="submit" :disabled="submitting || !selectedDataset"><Send v-if="!submitting" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ submitting ? '撮合中' : '提交模拟单' }}</span></button></form><p class="paper-note"><CircleDollarSign :size="13" /> 当前账户：{{ summary?.account_id || 'paper-main' }} · 数据源：已校验历史 K 线</p></section>
+
+      <section class="paper-panel account-panel" aria-labelledby="paper-account-title"><div class="section-heading"><div><p class="kicker">PAPER ACCOUNT</p><h2 id="paper-account-title">虚拟账户</h2></div><button class="secondary-button" type="button" :disabled="resetting" @click="resetAccount()"><RotateCcw :size="14" /> 重置</button></div><div class="balance-list"><div v-for="(value, asset) in summary?.balances || {}" :key="asset" class="balance-row"><span><strong>{{ asset }}</strong><small>{{ positions.find((item) => item.asset === asset)?.mark_price ? `≈ ${formatNumber(positions.find((item) => item.asset === asset)?.mark_price || '0', 4)} USDT` : '余额' }}</small></span><b>{{ formatNumber(value, 8) }}</b></div><div v-if="!summary" class="empty-state compact"><RefreshCw :size="18" class="spinning" /><p>正在读取账户</p></div></div><footer class="account-foot"><span>仅模拟</span><strong>不连接真实 API Key</strong></footer></section>
+    </section>
+
+    <section class="paper-panel order-history" aria-labelledby="paper-orders-title"><div class="section-heading"><div><p class="kicker">ORDER LEDGER</p><h2 id="paper-orders-title">模拟订单记录</h2></div><span class="section-meta">{{ orders.length }} ORDERS</span></div><div class="order-table-wrap"><table class="order-table"><thead><tr><th>时间</th><th>市场</th><th>方向</th><th>请求量</th><th>成交量</th><th>均价</th><th>状态</th><th>原因</th></tr></thead><tbody><tr v-for="order in orders" :key="order.order_id"><td>{{ formatDate(order.created_at) }}</td><td>{{ order.venue_id.toUpperCase() }} · {{ order.symbol }}</td><td :class="order.side === 'SELL' ? 'negative' : 'positive'">{{ order.side === 'SELL' ? '卖出' : '买入' }}</td><td>{{ formatNumber(order.quantity, 8) }}</td><td>{{ formatNumber(order.filled_quantity, 8) }}</td><td>{{ order.average_price ? formatNumber(order.average_price, 6) : '—' }}</td><td><span :class="`order-status ${order.status.toLowerCase()}`">{{ statusLabel(order.status) }}</span></td><td>{{ order.reason || '—' }}</td></tr><tr v-if="!orders.length"><td colspan="8" class="table-empty">还没有模拟订单</td></tr></tbody></table></div></section>
+    <section class="paper-panel account-breakdown-panel" aria-labelledby="paper-account-breakdown-title">
+      <div class="section-heading"><div><p class="kicker">VENUE ACCOUNTS</p><h2 id="paper-account-breakdown-title">交易所账户隔离</h2></div><span class="section-meta">{{ summary?.venue_count || 0 }} VENUES</span></div>
+      <div v-if="accountItems.length" class="account-grid">
+        <article v-for="account in accountItems" :key="account.venue_id" class="venue-account">
+          <header><div><strong>{{ venueLabel(account.venue_id) }}</strong><small>{{ account.account_id }} · 净值 {{ formatNumber(account.equity_quote, 2) }} USDT</small></div><button class="account-reset" type="button" :disabled="resetting" :aria-label="resetLabel(account.venue_id)" :title="resetLabel(account.venue_id)" @click="resetAccount(account.venue_id)"><RotateCcw :size="13" /></button></header>
+          <div class="venue-balances"><div v-for="(value, asset) in account.balances" :key="asset" class="venue-balance"><span>{{ asset }}</span><b>{{ formatNumber(value, 8) }}</b><small>{{ accountMark(account, asset) }}</small></div></div>
+          <footer><span>{{ account.order_count }} 笔订单 · {{ account.strategy_run_count }} 次回放</span><strong>仅模拟</strong></footer>
+        </article>
+      </div>
+      <div v-else class="empty-state compact"><RefreshCw :size="18" class="spinning" /><p>正在读取账户</p></div>
+    </section>
+    <section class="paper-panel strategy-history" aria-labelledby="paper-strategy-history-title"><div class="section-heading"><div><p class="kicker">STRATEGY REPLAY LOG</p><h2 id="paper-strategy-history-title">策略回放记录</h2></div><span class="section-meta">{{ strategyRuns.length }} RUNS</span></div><div class="strategy-run-list"><div v-for="run in strategyRuns" :key="run.run_id" class="strategy-run-row"><span><strong>{{ run.strategy_id }}</strong><small>{{ run.venue_id?.toUpperCase() }} · {{ run.symbol }} · {{ formatDate(run.created_at) }}</small></span><b :class="Number(run.total_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(run.total_return_pct, 3) }}%</b><em>{{ run.orders }} 笔</em></div><div v-if="!strategyRuns.length" class="table-empty">还没有策略回放记录</div></div></section>
+  </section>
+</template>
+
+<style scoped>
+.paper-center { display: grid; gap: 30px; }
+.paper-heading { margin-bottom: 0; }
+.inline-notice { border-left: 2px solid var(--cyan); padding: 8px 12px; color: var(--cyan); background: rgba(108, 229, 208, .07); font-size: 12px; line-height: 1.5; }
+.paper-actions { display: flex; align-items: center; gap: 12px; }
+.paper-banner { display: flex; align-items: start; gap: 10px; border-left: 2px solid var(--amber); padding: 12px 14px; color: var(--amber); background: rgba(228, 179, 109, .07); }
+.paper-banner div { display: grid; gap: 4px; }
+.paper-banner strong { color: var(--ink); font-size: 12px; font-weight: 620; }
+.paper-banner span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.inline-notice { border-left: 2px solid var(--cyan); padding: 8px 12px; color: var(--cyan); background: rgba(108, 229, 208, .07); font-size: 12px; }
+.paper-metrics { display: grid; grid-template-columns: repeat(5, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.paper-metrics article { display: grid; gap: 7px; min-height: 112px; padding: 19px 20px; border-right: 1px solid var(--line); }
+.paper-metrics article:last-child { border-right: 0; }
+.paper-metrics span, .paper-metrics em { color: var(--dim); font-size: 10px; font-style: normal; }
+.paper-metrics strong { align-self: center; color: var(--ink); font-size: 25px; font-weight: 560; }
+.paper-layout { display: grid; grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr); gap: 13px; align-items: start; }
+.automation-panel { display: grid; gap: 15px; }
+.automation-form { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(150px, .8fr) auto auto auto; gap: 10px; align-items: end; }
+.automation-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.automation-form input, .automation-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.automation-form input:focus, .automation-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
+.automation-check { display: inline-flex !important; align-items: center; gap: 7px !important; min-height: 37px; white-space: nowrap; }
+.automation-check input { width: 16px; min-height: 16px; accent-color: var(--cyan); }
+.strategy-replay-panel { display: grid; gap: 15px; }
+.replay-form { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(180px, .8fr) auto; gap: 12px; align-items: end; }
+.replay-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.replay-form input, .replay-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.strategy-history { padding-bottom: 14px; }
+.strategy-run-list { display: grid; border-top: 1px solid var(--line); }
+.strategy-run-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 18px; min-height: 53px; border-bottom: 1px solid var(--line); }
+.strategy-run-row > span { display: grid; gap: 4px; min-width: 0; }
+.strategy-run-row strong { color: var(--ink); font-size: 11px; font-weight: 560; }
+.strategy-run-row small, .strategy-run-row em { color: var(--dim); font-size: 9px; font-style: normal; }
+.strategy-run-row b { font-size: 11px; font-weight: 570; }
+.paper-panel { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 20px 19px; background: var(--panel); }
+.account-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.venue-account { min-width: 0; border: 1px solid var(--line); background: var(--panel-soft); }
+.venue-account header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border-bottom: 1px solid var(--line); }
+.venue-account header > div { display: grid; gap: 4px; min-width: 0; }
+.venue-account header strong { color: var(--ink); font-size: 12px; font-weight: 620; }
+.venue-account header small { color: var(--dim); font-size: 9px; }
+.account-reset { display: inline-grid; place-items: center; width: 28px; aspect-ratio: 1; border: 1px solid var(--line-bright); border-radius: 4px; color: var(--muted); background: transparent; }
+.account-reset:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.account-reset:disabled { opacity: .5; }
+.venue-balances { display: grid; padding: 0 12px; }
+.venue-balance { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 10px; align-items: center; min-height: 42px; border-bottom: 1px solid var(--line); }
+.venue-balance span { color: var(--muted); font-size: 10px; }
+.venue-balance b { color: var(--ink); font: 600 11px Consolas, monospace; }
+.venue-balance small { grid-column: 1 / -1; color: var(--dim); font-size: 8px; }
+.venue-account footer { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; color: var(--dim); font-size: 9px; }
+.venue-account footer strong { color: var(--amber); font-weight: 500; }
+.paper-form { display: grid; gap: 13px; }
+.paper-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
+.paper-form input, .paper-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.paper-form input:focus, .paper-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
+.paper-submit { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 39px; border: 1px solid var(--cyan); border-radius: 5px; color: #11201e; background: var(--cyan); font-size: 12px; font-weight: 720; }
+.paper-submit:hover:not(:disabled) { background: #94f0df; }
+.paper-submit:disabled { opacity: .55; cursor: not-allowed; }
+.paper-note { display: flex; align-items: start; gap: 7px; margin: 16px 0 0; color: var(--dim); font-size: 10px; line-height: 1.6; }
+.paper-note svg { flex: 0 0 auto; color: var(--amber); }
+.secondary-button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 7px 10px; color: var(--muted); background: transparent; font-size: 10px; }
+.secondary-button:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.secondary-button:disabled { opacity: .55; }
+.balance-list { display: grid; border-top: 1px solid var(--line); }
+.balance-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 49px; border-bottom: 1px solid var(--line); }
+.balance-row span { display: grid; gap: 4px; }
+.balance-row strong { color: var(--ink); font-size: 12px; font-weight: 580; }
+.balance-row small { color: var(--dim); font-size: 9px; }
+.balance-row b { color: var(--ink); font: 600 12px Consolas, monospace; }
+.account-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 13px; color: var(--dim); font-size: 10px; }
+.account-foot strong { color: var(--amber); font-weight: 500; }
+.empty-state { display: grid; justify-items: center; gap: 8px; min-height: 150px; place-content: center; border: 1px dashed var(--line-bright); color: var(--dim); }
+.empty-state.compact { min-height: 80px; border: 0; }
+.empty-state p { margin: 0; color: var(--muted); font-size: 12px; }
+.order-history { padding-bottom: 14px; }
+.order-table-wrap { overflow-x: auto; border: 1px solid var(--line); }
+.order-table { width: 100%; min-width: 900px; border-collapse: collapse; }
+.order-table th, .order-table td { padding: 10px 9px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; text-align: right; white-space: nowrap; }
+.order-table th { color: var(--dim); background: var(--panel-soft); font-size: 9px; letter-spacing: .07em; text-transform: uppercase; }
+.order-table th:first-child, .order-table td:first-child, .order-table th:nth-child(2), .order-table td:nth-child(2) { text-align: left; }
+.order-table tr:last-child td { border-bottom: 0; }
+.positive { color: var(--cyan) !important; }
+.negative { color: var(--red) !important; }
+.order-status { padding: 4px 6px; color: var(--muted); background: #222a2a; font-size: 9px; }
+.order-status.filled { color: var(--cyan); background: rgba(108, 229, 208, .1); }
+.order-status.partially_filled, .order-status.open { color: var(--amber); background: rgba(228, 179, 109, .1); }
+.order-status.rejected { color: var(--red); background: rgba(238, 129, 120, .1); }
+.table-empty { padding: 28px !important; color: var(--dim) !important; text-align: center !important; }
+@media (max-width: 1050px) { .automation-form { grid-template-columns: 1fr 1fr; } .automation-form .automation-check { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .paper-layout { grid-template-columns: 1fr; } .replay-form { grid-template-columns: 1fr 1fr; } .replay-form button { grid-column: 1 / -1; } }
+@media (max-width: 900px) { .account-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .paper-metrics { grid-template-columns: repeat(3, 1fr); } .paper-metrics article:nth-child(3) { border-right: 0; } .paper-metrics article:nth-child(-n + 3) { border-bottom: 1px solid var(--line); } }
+@media (max-width: 680px) { .paper-actions .heading-stamp { display: none; } .paper-metrics { grid-template-columns: 1fr 1fr; } .paper-metrics article:nth-child(2n) { border-right: 0; } .paper-metrics article:nth-child(-n + 4) { border-bottom: 1px solid var(--line); } }
+@media (max-width: 420px) { .paper-metrics { grid-template-columns: 1fr; } .paper-metrics article { border-right: 0; border-bottom: 1px solid var(--line); } .paper-metrics article:last-child { border-bottom: 0; } }
+</style>

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/execution/account-snapshot-v1.schema.json",
+  "title": "Read-only account snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["account_id", "venue_id", "balances", "fetched_at", "open_order_ids", "state"],
+  "properties": {
+    "account_id": {"type": "string", "minLength": 1},
+    "venue_id": {"type": "string", "minLength": 1},
+    "balances": {"type": "array"},
+    "fetched_at": {"type": "string", "format": "date-time"},
+    "open_order_ids": {"type": "array", "items": {"type": "string"}},
+    "state": {"enum": ["FRESH", "RECONCILED", "RECONCILIATION_REQUIRED", "ERROR"]}
+  }
+}

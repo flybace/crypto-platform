@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/strategy/incubator-v1.schema.json",
+  "title": "Strategy incubator snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["pool_id", "kind", "candidate_count", "stage", "research_only"],
+  "properties": {
+    "pool_id": {"type": "string", "minLength": 1},
+    "kind": {"const": "strategy_incubator"},
+    "candidate_count": {"type": "integer", "minimum": 0},
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "label", "progress", "next_action"],
+      "properties": {
+        "key": {"enum": ["collecting", "sample_validation", "ready_for_retest"]},
+        "label": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
+        "progress": {"type": "number", "minimum": 0, "maximum": 100},
+        "next_action": {"type": "string", "minLength": 1}
+      }
+    },
+    "research_only": {"const": true}
+  }
+}

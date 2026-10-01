@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/market/history-raw-response-v1.schema.json",
+  "title": "Historical raw public response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "response_id", "dataset_id", "page_index", "received_at", "query", "request", "response", "payload_sha256", "payload"],
+  "properties": {
+    "contract_version": {"const": "history-raw-response-v1"},
+    "response_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "dataset_id": {"type": "string", "minLength": 1},
+    "page_index": {"type": "integer", "minimum": 1},
+    "received_at": {"type": "string", "format": "date-time"},
+    "query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["venue_id", "market_type", "instrument_key", "native_symbol", "interval"],
+      "properties": {
+        "venue_id": {"type": "string", "minLength": 1},
+        "market_type": {"const": "spot"},
+        "instrument_key": {"type": "string", "minLength": 1},
+        "native_symbol": {"type": "string", "minLength": 1},
+        "interval": {"enum": ["1d", "1h", "5m"]}
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "params"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "params": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status_code", "headers"],
+      "properties": {
+        "status_code": {"type": "integer", "minimum": 200, "maximum": 299},
+        "headers": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "payload_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "payload": {}
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/paper/paper-account-v1.schema.json",
+  "title": "Paper account snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["paper_account_id", "balances"],
+  "properties": {
+    "paper_account_id": {"type": "string", "minLength": 1},
+    "balances": {"type": "object", "additionalProperties": {"type": "string"}}
+  }
+}

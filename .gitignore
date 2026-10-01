@@ -1,0 +1,44 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.crt
+
+# Runtime and local data
+data/
+runtime/
+logs/
+/output/
+*.log
+*.sqlite
+*.db
+*.parquet
+*.ndjson
+*.jsonl
+
+# Build output and dependencies
+node_modules/
+__pycache__/
+.pytest_cache/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local tooling
+.playwright-cli/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Accidental browser-command captures (preserved locally)
+/button.innerText.trim()).filter(Boolean).slice(-20)})
+/r.status)

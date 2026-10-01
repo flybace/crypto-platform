@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crypto-platform.local/contracts/ai/action-request-v1.schema.json",
+  "title": "GACE AI action request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "action", "actor", "risk_level", "payload", "authorization_id", "idempotency_key", "expires_at"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "action": {"type": "string", "minLength": 1},
+    "actor": {"type": "string", "minLength": 1},
+    "risk_level": {"enum": ["READ_ONLY", "CONTROLLED_WRITE", "HIGH_RISK"]},
+    "payload": {"type": "object"},
+    "authorization_id": {"type": "string", "minLength": 1},
+    "idempotency_key": {"type": "string", "minLength": 1},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}

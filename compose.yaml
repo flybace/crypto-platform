@@ -1,0 +1,343 @@
+name: crypto-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${CRYPTO_POSTGRES_DB:-crypto_platform}
+      POSTGRES_USER: ${CRYPTO_POSTGRES_USER:-crypto_app}
+      POSTGRES_PASSWORD: ${CRYPTO_POSTGRES_PASSWORD:-change-this-postgres-password}
+    volumes:
+      - crypto_platform_pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - crypto_platform_redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    image: ${CRYPTO_BACKEND_IMAGE:-crypto-platform/backend:0.1.0}
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "${CRYPTO_BIND_ADDRESS:-10.10.10.129}:${CRYPTO_BACKEND_PORT:-8290}:8000"
+    environment:
+      CRYPTO_ADMIN_USERNAME: ${CRYPTO_ADMIN_USERNAME:-admin}
+      CRYPTO_ADMIN_PASSWORD: ${CRYPTO_ADMIN_PASSWORD:-}
+      CRYPTO_SESSION_SECRET: ${CRYPTO_SESSION_SECRET:-}
+      CRYPTO_DEV_MODE: ${CRYPTO_DEV_MODE:-false}
+      CRYPTO_EXECUTION_MODE: ${CRYPTO_EXECUTION_MODE:-DISABLED}
+      CRYPTO_DATABASE_URL: ${CRYPTO_DATABASE_URL:-postgresql+psycopg://${CRYPTO_POSTGRES_USER:-crypto_app}:${CRYPTO_POSTGRES_PASSWORD:-change-this-postgres-password}@postgres:5432/${CRYPTO_POSTGRES_DB:-crypto_platform}}
+      CRYPTO_REDIS_URL: ${CRYPTO_REDIS_URL:-redis://redis:6379/0}
+      CRYPTO_PERSISTENCE_REQUIRED: ${CRYPTO_PERSISTENCE_REQUIRED:-true}
+      CRYPTO_TASK_QUEUE_MODE: ${CRYPTO_TASK_QUEUE_MODE:-redis}
+      CRYPTO_MARKET_STATE_PATH: ${CRYPTO_MARKET_STATE_PATH:-/runtime/market}
+      CRYPTO_MARKET_ARCHIVE_ENABLED: ${CRYPTO_MARKET_ARCHIVE_ENABLED:-false}
+      CRYPTO_MARKET_ARCHIVE_PATH: ${CRYPTO_MARKET_ARCHIVE_PATH:-/runtime/market/archive}
+      CRYPTO_HISTORY_DATA_PATH: ${CRYPTO_HISTORY_DATA_PATH:-/runtime/history}
+      CRYPTO_HISTORY_TIMEOUT_SECONDS: ${CRYPTO_HISTORY_TIMEOUT_SECONDS:-10}
+      CRYPTO_HISTORY_PAGE_PAUSE_SECONDS: ${CRYPTO_HISTORY_PAGE_PAUSE_SECONDS:-0.05}
+      CRYPTO_HISTORY_MAX_PAGES: ${CRYPTO_HISTORY_MAX_PAGES:-2000}
+      CRYPTO_HISTORY_TRUST_ENV: ${CRYPTO_HISTORY_TRUST_ENV:-false}
+      CRYPTO_PUBLIC_TRUST_ENV: ${CRYPTO_PUBLIC_TRUST_ENV:-false}
+      CRYPTO_BINANCE_PUBLIC_HTTP_PROXY: ${CRYPTO_BINANCE_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_OKX_PUBLIC_HTTP_PROXY: ${CRYPTO_OKX_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_HTTP_PROXY: ${CRYPTO_BYBIT_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BINANCE_PUBLIC_WS_PROXY: ${CRYPTO_BINANCE_PUBLIC_WS_PROXY:-}
+      CRYPTO_OKX_PUBLIC_WS_PROXY: ${CRYPTO_OKX_PUBLIC_WS_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_WS_PROXY: ${CRYPTO_BYBIT_PUBLIC_WS_PROXY:-}
+      CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH: ${CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH:-/runtime/history/.runtime/public-network-settings.json}
+      CRYPTO_SCHEDULER_INTERVAL_SECONDS: ${CRYPTO_SCHEDULER_INTERVAL_SECONDS:-900}
+      CRYPTO_SCHEDULER_BACKOFF_INITIAL_SECONDS: ${CRYPTO_SCHEDULER_BACKOFF_INITIAL_SECONDS:-300}
+      CRYPTO_SCHEDULER_BACKOFF_MAX_SECONDS: ${CRYPTO_SCHEDULER_BACKOFF_MAX_SECONDS:-21600}
+      CRYPTO_TASK_MAX_ATTEMPTS: ${CRYPTO_TASK_MAX_ATTEMPTS:-3}
+      CRYPTO_TASK_LEASE_SECONDS: ${CRYPTO_TASK_LEASE_SECONDS:-900}
+      CRYPTO_TASK_MAX_RUNTIME_SECONDS: ${CRYPTO_TASK_MAX_RUNTIME_SECONDS:-3600}
+      CRYPTO_TASK_MAX_PAYLOAD_BYTES: ${CRYPTO_TASK_MAX_PAYLOAD_BYTES:-262144}
+      CRYPTO_TASK_MAX_RESULT_BYTES: ${CRYPTO_TASK_MAX_RESULT_BYTES:-2097152}
+      CRYPTO_TASK_MAX_ITEMS: ${CRYPTO_TASK_MAX_ITEMS:-100}
+      CRYPTO_TASK_LOG_RETENTION_DAYS: ${CRYPTO_TASK_LOG_RETENTION_DAYS:-365}
+      CRYPTO_TASK_LOG_BACKUP_PATH: ${CRYPTO_TASK_LOG_BACKUP_PATH:-/runtime/history/.runtime/task-log-backups/latest.tar}
+      CRYPTO_TASK_LOG_RESTORE_PATH: ${CRYPTO_TASK_LOG_RESTORE_PATH:-/runtime/history/.runtime/task-log-restore-rehearsal}
+      CRYPTO_BINANCE_PUBLIC_REST_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_REST_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_PUBLIC_REST_BASE_URL: ${CRYPTO_OKX_PUBLIC_REST_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_PUBLIC_REST_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_REST_BASE_URL:-https://api.bybit-tr.com}
+      CRYPTO_BINANCE_PUBLIC_WS_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_WS_BASE_URL:-wss://data-stream.binance.vision}
+      CRYPTO_OKX_PUBLIC_WS_BASE_URL: ${CRYPTO_OKX_PUBLIC_WS_BASE_URL:-wss://ws.okx.com:8443/ws/v5/public}
+      CRYPTO_BYBIT_PUBLIC_WS_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_WS_BASE_URL:-wss://stream.bybit.kz/v5/public/spot}
+      CRYPTO_BINANCE_HISTORY_BASE_URL: ${CRYPTO_BINANCE_HISTORY_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_HISTORY_BASE_URL: ${CRYPTO_OKX_HISTORY_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_HISTORY_BASE_URL: ${CRYPTO_BYBIT_HISTORY_BASE_URL:-https://api.bybit-tr.com}
+    volumes:
+      - ./runtime/market:/runtime/market:ro
+      - ./data/history:/runtime/history
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    image: ${CRYPTO_FRONTEND_IMAGE:-crypto-platform/frontend:0.1.0}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${CRYPTO_BIND_ADDRESS:-10.10.10.129}:${CRYPTO_FRONTEND_PORT:-4191}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    init: true
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+
+  market-worker:
+    profiles:
+      - market
+    image: ${CRYPTO_BACKEND_IMAGE:-crypto-platform/backend:0.1.0}
+    environment:
+      CRYPTO_MARKET_WORKER_ENABLED: ${CRYPTO_MARKET_WORKER_ENABLED:-false}
+      CRYPTO_MARKET_INSTRUMENTS: ${CRYPTO_MARKET_INSTRUMENTS:-}
+      CRYPTO_MARKET_MAX_AGE_SECONDS: ${CRYPTO_MARKET_MAX_AGE_SECONDS:-2}
+      CRYPTO_MARKET_DEPTH_LIMIT: ${CRYPTO_MARKET_DEPTH_LIMIT:-100}
+      CRYPTO_MARKET_BYBIT_DEPTH_LIMIT: ${CRYPTO_MARKET_BYBIT_DEPTH_LIMIT:-50}
+      CRYPTO_MARKET_WS_SPEED_MS: ${CRYPTO_MARKET_WS_SPEED_MS:-100}
+      CRYPTO_MARKET_REST_TIMEOUT_SECONDS: ${CRYPTO_MARKET_REST_TIMEOUT_SECONDS:-5}
+      CRYPTO_PUBLIC_TRUST_ENV: ${CRYPTO_PUBLIC_TRUST_ENV:-false}
+      CRYPTO_BINANCE_PUBLIC_HTTP_PROXY: ${CRYPTO_BINANCE_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_OKX_PUBLIC_HTTP_PROXY: ${CRYPTO_OKX_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_HTTP_PROXY: ${CRYPTO_BYBIT_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BINANCE_PUBLIC_WS_PROXY: ${CRYPTO_BINANCE_PUBLIC_WS_PROXY:-}
+      CRYPTO_OKX_PUBLIC_WS_PROXY: ${CRYPTO_OKX_PUBLIC_WS_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_WS_PROXY: ${CRYPTO_BYBIT_PUBLIC_WS_PROXY:-}
+      CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH: ${CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH:-/runtime/history/.runtime/public-network-settings.json}
+      CRYPTO_PUBLIC_NETWORK_SETTINGS_POLL_SECONDS: ${CRYPTO_PUBLIC_NETWORK_SETTINGS_POLL_SECONDS:-2}
+      CRYPTO_MARKET_RETRY_INITIAL_SECONDS: ${CRYPTO_MARKET_RETRY_INITIAL_SECONDS:-1}
+      CRYPTO_MARKET_RETRY_MAX_SECONDS: ${CRYPTO_MARKET_RETRY_MAX_SECONDS:-30}
+      CRYPTO_BINANCE_PUBLIC_REST_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_REST_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_PUBLIC_REST_BASE_URL: ${CRYPTO_OKX_PUBLIC_REST_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_PUBLIC_REST_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_REST_BASE_URL:-https://api.bybit-tr.com}
+      CRYPTO_BINANCE_PUBLIC_WS_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_WS_BASE_URL:-wss://data-stream.binance.vision}
+      CRYPTO_OKX_PUBLIC_WS_BASE_URL: ${CRYPTO_OKX_PUBLIC_WS_BASE_URL:-wss://ws.okx.com:8443/ws/v5/public}
+      CRYPTO_BYBIT_PUBLIC_WS_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_WS_BASE_URL:-wss://stream.bybit.kz/v5/public/spot}
+      CRYPTO_BYBIT_PUBLIC_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_BASE_URL:-https://api.bybit-tr.com}
+      CRYPTO_BYBIT_MARKET_WS_URL: ${CRYPTO_BYBIT_MARKET_WS_URL:-wss://stream.bybit.kz/v5/public/spot}
+      CRYPTO_MARKET_STATE_PATH: ${CRYPTO_MARKET_STATE_PATH:-/runtime/market}
+      CRYPTO_MARKET_ARCHIVE_ENABLED: ${CRYPTO_MARKET_ARCHIVE_ENABLED:-false}
+      CRYPTO_MARKET_ARCHIVE_PATH: ${CRYPTO_MARKET_ARCHIVE_PATH:-/runtime/market/archive}
+      CRYPTO_MARKET_ARCHIVE_SEGMENT_SECONDS: ${CRYPTO_MARKET_ARCHIVE_SEGMENT_SECONDS:-3600}
+      CRYPTO_MARKET_ARCHIVE_SEGMENT_BYTES: ${CRYPTO_MARKET_ARCHIVE_SEGMENT_BYTES:-67108864}
+      CRYPTO_MARKET_ARCHIVE_RETENTION_SECONDS: ${CRYPTO_MARKET_ARCHIVE_RETENTION_SECONDS:-604800}
+      CRYPTO_MARKET_ARCHIVE_CLEANUP_INTERVAL_SECONDS: ${CRYPTO_MARKET_ARCHIVE_CLEANUP_INTERVAL_SECONDS:-60}
+      CRYPTO_LOG_LEVEL: ${CRYPTO_LOG_LEVEL:-INFO}
+    command: ["python", "-m", "services.market_worker"]
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    stop_grace_period: ${CRYPTO_MARKET_SHUTDOWN_GRACE_PERIOD:-30s}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          if os.getenv("CRYPTO_MARKET_WORKER_ENABLED", "false").strip().lower() != "true":
+              raise SystemExit(0)
+          root = Path("/runtime/market")
+          entries = [item.strip() for item in os.getenv("CRYPTO_MARKET_INSTRUMENTS", "").split(",") if item.strip()]
+          if not entries:
+              raise SystemExit("market worker allowlist is empty")
+          for entry in entries:
+              venue, native_symbol = entry.split(":", 1)
+              status = json.loads((root / f"status-{venue.lower()}.json").read_text())
+              if status.get("state") != "CONNECTED":
+                  raise SystemExit(f"{venue} status is not connected")
+              snapshot = None
+              for path in root.glob("snapshot-*.json"):
+                  payload = json.loads(path.read_text())
+                  instrument = payload.get("instrument", {})
+                  if str(instrument.get("venue_id", "")).lower() == venue.lower() and str(instrument.get("native_symbol", "")).upper() == native_symbol.upper():
+                      snapshot = payload
+                      break
+              if snapshot is None:
+                  raise SystemExit(f"{entry} snapshot is missing")
+              received = datetime.fromisoformat(str(snapshot["received_timestamp"]))
+              age = (datetime.now(timezone.utc) - received).total_seconds()
+              if age < 0 or age > 15:
+                  raise SystemExit(f"{entry} snapshot is stale")
+              if int(snapshot.get("sequence", 0)) <= 0 or not snapshot.get("bids") or not snapshot.get("asks"):
+                  raise SystemExit(f"{entry} snapshot is invalid")
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - ./runtime/market:/runtime/market
+      - ./data/history:/runtime/history:ro
+
+  task-worker:
+    image: ${CRYPTO_BACKEND_IMAGE:-crypto-platform/backend:0.1.0}
+    environment:
+      CRYPTO_ADMIN_PASSWORD: ${CRYPTO_ADMIN_PASSWORD:-worker-process-does-not-use-auth}
+      CRYPTO_SESSION_SECRET: ${CRYPTO_SESSION_SECRET:-worker-process-session-secret-change-me}
+      CRYPTO_DEV_MODE: "false"
+      CRYPTO_DATABASE_URL: ${CRYPTO_DATABASE_URL:-postgresql+psycopg://${CRYPTO_POSTGRES_USER:-crypto_app}:${CRYPTO_POSTGRES_PASSWORD:-change-this-postgres-password}@postgres:5432/${CRYPTO_POSTGRES_DB:-crypto_platform}}
+      CRYPTO_REDIS_URL: ${CRYPTO_REDIS_URL:-redis://redis:6379/0}
+      CRYPTO_PERSISTENCE_REQUIRED: "true"
+      CRYPTO_HISTORY_DATA_PATH: /runtime/history
+      CRYPTO_HISTORY_TRUST_ENV: ${CRYPTO_HISTORY_TRUST_ENV:-false}
+      CRYPTO_TASK_QUEUE_MODE: redis
+      CRYPTO_TASK_MAX_ATTEMPTS: ${CRYPTO_TASK_MAX_ATTEMPTS:-3}
+      CRYPTO_TASK_LEASE_SECONDS: ${CRYPTO_TASK_LEASE_SECONDS:-900}
+      CRYPTO_TASK_MAX_RUNTIME_SECONDS: ${CRYPTO_TASK_MAX_RUNTIME_SECONDS:-3600}
+      CRYPTO_TASK_MAX_PAYLOAD_BYTES: ${CRYPTO_TASK_MAX_PAYLOAD_BYTES:-262144}
+      CRYPTO_TASK_MAX_RESULT_BYTES: ${CRYPTO_TASK_MAX_RESULT_BYTES:-2097152}
+      CRYPTO_TASK_MAX_ITEMS: ${CRYPTO_TASK_MAX_ITEMS:-100}
+      CRYPTO_TASK_RECOVERY_GRACE_SECONDS: ${CRYPTO_TASK_RECOVERY_GRACE_SECONDS:-60}
+      CRYPTO_TASK_LOG_RETENTION_DAYS: ${CRYPTO_TASK_LOG_RETENTION_DAYS:-365}
+      CRYPTO_PUBLIC_TRUST_ENV: ${CRYPTO_PUBLIC_TRUST_ENV:-false}
+      CRYPTO_BINANCE_PUBLIC_HTTP_PROXY: ${CRYPTO_BINANCE_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_OKX_PUBLIC_HTTP_PROXY: ${CRYPTO_OKX_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_HTTP_PROXY: ${CRYPTO_BYBIT_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BINANCE_PUBLIC_WS_PROXY: ${CRYPTO_BINANCE_PUBLIC_WS_PROXY:-}
+      CRYPTO_OKX_PUBLIC_WS_PROXY: ${CRYPTO_OKX_PUBLIC_WS_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_WS_PROXY: ${CRYPTO_BYBIT_PUBLIC_WS_PROXY:-}
+      CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH: ${CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH:-/runtime/history/.runtime/public-network-settings.json}
+      CRYPTO_BINANCE_PUBLIC_REST_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_REST_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_PUBLIC_REST_BASE_URL: ${CRYPTO_OKX_PUBLIC_REST_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_PUBLIC_REST_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_REST_BASE_URL:-https://api.bybit-tr.com}
+      CRYPTO_BINANCE_PUBLIC_WS_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_WS_BASE_URL:-wss://data-stream.binance.vision}
+      CRYPTO_OKX_PUBLIC_WS_BASE_URL: ${CRYPTO_OKX_PUBLIC_WS_BASE_URL:-wss://ws.okx.com:8443/ws/v5/public}
+      CRYPTO_BYBIT_PUBLIC_WS_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_WS_BASE_URL:-wss://stream.bybit.kz/v5/public/spot}
+      CRYPTO_BINANCE_HISTORY_BASE_URL: ${CRYPTO_BINANCE_HISTORY_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_HISTORY_BASE_URL: ${CRYPTO_OKX_HISTORY_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_HISTORY_BASE_URL: ${CRYPTO_BYBIT_HISTORY_BASE_URL:-https://api.bybit-tr.com}
+    command: ["python", "-m", "services.task_worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data/history:/runtime/history
+    init: true
+    stop_grace_period: ${CRYPTO_TASK_SHUTDOWN_GRACE_PERIOD:-30s}
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+  task-scheduler:
+    image: ${CRYPTO_BACKEND_IMAGE:-crypto-platform/backend:0.1.0}
+    environment:
+      CRYPTO_ADMIN_PASSWORD: ${CRYPTO_ADMIN_PASSWORD:-scheduler-process-does-not-use-auth}
+      CRYPTO_SESSION_SECRET: ${CRYPTO_SESSION_SECRET:-scheduler-process-session-secret-change-me}
+      CRYPTO_DEV_MODE: "false"
+      CRYPTO_DATABASE_URL: ${CRYPTO_DATABASE_URL:-postgresql+psycopg://${CRYPTO_POSTGRES_USER:-crypto_app}:${CRYPTO_POSTGRES_PASSWORD:-change-this-postgres-password}@postgres:5432/${CRYPTO_POSTGRES_DB:-crypto_platform}}
+      CRYPTO_REDIS_URL: ${CRYPTO_REDIS_URL:-redis://redis:6379/0}
+      CRYPTO_PERSISTENCE_REQUIRED: "true"
+      CRYPTO_HISTORY_DATA_PATH: /runtime/history
+      CRYPTO_HISTORY_TRUST_ENV: ${CRYPTO_HISTORY_TRUST_ENV:-false}
+      CRYPTO_TASK_QUEUE_MODE: redis
+      CRYPTO_TASK_MAX_ATTEMPTS: ${CRYPTO_TASK_MAX_ATTEMPTS:-3}
+      CRYPTO_TASK_LEASE_SECONDS: ${CRYPTO_TASK_LEASE_SECONDS:-900}
+      CRYPTO_TASK_MAX_RUNTIME_SECONDS: ${CRYPTO_TASK_MAX_RUNTIME_SECONDS:-3600}
+      CRYPTO_TASK_MAX_PAYLOAD_BYTES: ${CRYPTO_TASK_MAX_PAYLOAD_BYTES:-262144}
+      CRYPTO_TASK_MAX_RESULT_BYTES: ${CRYPTO_TASK_MAX_RESULT_BYTES:-2097152}
+      CRYPTO_TASK_MAX_ITEMS: ${CRYPTO_TASK_MAX_ITEMS:-100}
+      CRYPTO_TASK_RECOVERY_GRACE_SECONDS: ${CRYPTO_TASK_RECOVERY_GRACE_SECONDS:-60}
+      CRYPTO_TASK_LOG_RETENTION_DAYS: ${CRYPTO_TASK_LOG_RETENTION_DAYS:-365}
+      CRYPTO_SCHEDULER_INTERVAL_SECONDS: ${CRYPTO_SCHEDULER_INTERVAL_SECONDS:-900}
+      CRYPTO_SCHEDULER_BACKOFF_INITIAL_SECONDS: ${CRYPTO_SCHEDULER_BACKOFF_INITIAL_SECONDS:-300}
+      CRYPTO_SCHEDULER_BACKOFF_MAX_SECONDS: ${CRYPTO_SCHEDULER_BACKOFF_MAX_SECONDS:-21600}
+      CRYPTO_BINANCE_HISTORY_BASE_URL: ${CRYPTO_BINANCE_HISTORY_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_HISTORY_BASE_URL: ${CRYPTO_OKX_HISTORY_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_HISTORY_BASE_URL: ${CRYPTO_BYBIT_HISTORY_BASE_URL:-https://api.bybit-tr.com}
+      CRYPTO_PUBLIC_TRUST_ENV: ${CRYPTO_PUBLIC_TRUST_ENV:-false}
+      CRYPTO_BINANCE_PUBLIC_HTTP_PROXY: ${CRYPTO_BINANCE_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_OKX_PUBLIC_HTTP_PROXY: ${CRYPTO_OKX_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_HTTP_PROXY: ${CRYPTO_BYBIT_PUBLIC_HTTP_PROXY:-}
+      CRYPTO_BINANCE_PUBLIC_WS_PROXY: ${CRYPTO_BINANCE_PUBLIC_WS_PROXY:-}
+      CRYPTO_OKX_PUBLIC_WS_PROXY: ${CRYPTO_OKX_PUBLIC_WS_PROXY:-}
+      CRYPTO_BYBIT_PUBLIC_WS_PROXY: ${CRYPTO_BYBIT_PUBLIC_WS_PROXY:-}
+      CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH: ${CRYPTO_PUBLIC_NETWORK_SETTINGS_PATH:-/runtime/history/.runtime/public-network-settings.json}
+      CRYPTO_BINANCE_PUBLIC_REST_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_REST_BASE_URL:-https://data-api.binance.vision}
+      CRYPTO_OKX_PUBLIC_REST_BASE_URL: ${CRYPTO_OKX_PUBLIC_REST_BASE_URL:-https://www.okx.com}
+      CRYPTO_BYBIT_PUBLIC_REST_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_REST_BASE_URL:-https://api.bybit-tr.com}
+      CRYPTO_BINANCE_PUBLIC_WS_BASE_URL: ${CRYPTO_BINANCE_PUBLIC_WS_BASE_URL:-wss://data-stream.binance.vision}
+      CRYPTO_OKX_PUBLIC_WS_BASE_URL: ${CRYPTO_OKX_PUBLIC_WS_BASE_URL:-wss://ws.okx.com:8443/ws/v5/public}
+      CRYPTO_BYBIT_PUBLIC_WS_BASE_URL: ${CRYPTO_BYBIT_PUBLIC_WS_BASE_URL:-wss://stream.bybit.kz/v5/public/spot}
+    command: ["python", "-m", "services.task_scheduler"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data/history:/runtime/history
+    init: true
+    stop_grace_period: ${CRYPTO_TASK_SHUTDOWN_GRACE_PERIOD:-30s}
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped
+
+volumes:
+  crypto_platform_pg_data:
+  crypto_platform_redis_data:
