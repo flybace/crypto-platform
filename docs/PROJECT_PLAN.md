@@ -2993,3 +2993,24 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 ### 31.30 2026-09-28 L2 归档治理状态源码切片
 
 完整记录迁至 [STATUS_2026_09_28.md](STATUS_2026_09_28.md#3130-2026-09-28-l2-归档治理状态源码切片)，内容按原验收日期保留。
+
+### 31.31 2026-10-02 M5 真实账户只读接入底座（源码切片）
+
+用户明确要求：先做只读底座，真实账号后续再接（当前无 API Key）；自动交易必须在设置中显式打开才可用，默认关闭。本轮只做只读，不碰下单。
+
+本轮新增（源码 + 自动测试）：
+
+- `src/adapters/venues/binance_account.py`：Binance HMAC-SHA256 签名私有 REST 客户端，只实现只读端点（`GET /api/v3/account` 余额、`GET /api/v3/openOrders` 挂单）；**不实现任何下单/撤单/转账端点**，签名密钥不进日志。
+- `src/ports/secrets.py` + `src/adapters/standalone/env_secret_provider.py`：`SecretProvider` 协议与环境变量实现（`CRYPTO_BINANCE_API_KEY` / `CRYPTO_BINANCE_API_SECRET`）；未配置时账户功能明确不可用，不静默降级。
+- `src/adapters/venues/binance_account.py` 内 `BinanceReadOnlyAccountGateway`：实现 `ReadOnlyAccountGateway` 协议，`fetch_account()` 返回 `AccountSnapshot`（余额映射为 `Balance`，挂单映射为订单 ID）；网络/签名/权限错误映射为明确异常，不伪造数据。
+- `backend/app/api/account.py`：`GET /api/v1/account/status`（是否已配置）、`GET /api/v1/account/balances`、`GET /api/v1/account/orders`；全部需认证、全部只读，无写操作。
+- `CRYPTO_AUTO_TRADING_ENABLED`（默认 `false`）：自动交易显式总开关；`GET /api/v1/settings/trading` 查询、`PUT /api/v1/settings/trading` 修改（需认证）。本轮该开关只做状态管理，不接任何交易执行路径（M6 未开始）。
+- `frontend/src/components/AccountCenter.vue`：账户页面（只读余额表 + 挂单列表 + 配置状态提示），接入工作台导航。
+
+安全边界（本轮强制）：
+
+- 只读底座不包含任何下单能力；`ReadOnlyAccountGateway` 协议层面就没有写方法。
+- API Key/Secret 不经过前端、不进日志、不进 API 响应。
+- 自动交易开关默认关闭；后续 M6 的任何执行路径必须先检查该开关，关闭时订单提交路径不可达。
+
+当前边界：真实 Binance 账号尚未接入（用户暂无 API Key）；Bybit/OKX 私有端点未实现；对账调度、持久化账本、安全暂停编排仍是 M5 未完成项。执行模式保持 `DISABLED`。
