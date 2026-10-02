@@ -3014,3 +3014,30 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 自动交易开关默认关闭；后续 M6 的任何执行路径必须先检查该开关，关闭时订单提交路径不可达。
 
 当前边界：真实 Binance 账号尚未接入（用户暂无 API Key）；Bybit/OKX 私有端点未实现；对账调度、持久化账本、安全暂停编排仍是 M5 未完成项。执行模式保持 `DISABLED`。
+
+### 31.32 2026-10-02 M5 对账调度、持久化账本与安全暂停（源码切片）
+
+延续 31.31 的只读账户底座，完成 M5 剩余三项：持久化账本、对账调度、安全暂停编排。仍不涉及真实下单。
+
+本轮新增（源码 + 自动测试）：
+
+- `backend/app/services/account_ledger_store.py`：`AccountLedgerStore`，SQLAlchemy 关系存储，四张表：
+  - `account_snapshots`：账户快照历史（余额 JSON、挂单 ID、状态）；
+  - `account_ledger_entries`：余额变动条目（资产、delta、事件类型、时间）；
+  - `account_reconciliation_runs`：对账运行记录（是否平衡、差异明细）；
+  - `account_safety_pause`：单行安全暂停状态（暂停/原因/触发与解除时间/操作人）。
+- `backend/app/services/account_reconciliation_scheduler.py`：`AccountReconciliationScheduler`，后台线程每 300 秒一轮：
+  1. 经网关拉取快照（未配置时跳过，不静默造数）；
+  2. 校验：负余额、ERROR 状态判为异常；
+  3. 与上次快照 diff → 余额变动记账本条目；
+  4. 持久化新快照，记录对账运行；
+  5. 异常（拉取失败、负余额、ERROR 状态、单轮资产跌超 50%）→ 触发安全暂停（fail closed）。
+- `backend/app/api/account.py` 新增：`GET /snapshots`、`GET /ledger`、`GET /reconciliation`（调度器状态+最近运行+暂停状态）、`POST /reconciliation/run`（手动触发）、`GET /pause`、`POST /pause/clear`（需认证手动解除）。
+- `frontend/src/components/AccountCenter.vue` 新增：安全暂停告警条（带解除按钮）、对账状态面板（调度器运行状态、间隔、网关配置、上次结果、最近 5 次对账表）。
+- `main.py` 接线：创建 `AccountLedgerStore` 与调度器，随应用启停；网关未配置时调度器空转跳过。
+
+安全边界：对账异常自动暂停，暂停后需人工在页面确认解除；所有接口需认证；执行模式保持 `DISABLED`；自动交易开关仍默认关闭。
+
+当前边界：真实 Binance 账号尚未接入（用户暂无 API Key），调度器当前空转跳过；M5 至此完成只读账户与风控前置全集。M6 真实下单未开始。
+
+测试：362 passed（11 新增）。

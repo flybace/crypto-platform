@@ -234,6 +234,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         try:
+            account_recon_scheduler.start()
             yield
         finally:
             try:
@@ -246,6 +247,8 @@ def create_app(
                 close_account = getattr(account_gateway, "close", None)
                 if callable(close_account):
                     close_account()
+                account_recon_scheduler.stop()
+                account_ledger_store.close()
                 runtime_history_jobs.close()
             finally:
                 task_store.close()
@@ -318,6 +321,17 @@ def create_app(
             trust_env=runtime_settings.public_trust_env,
         )
     app.state.account_gateway = account_gateway
+    from .services.account_ledger_store import AccountLedgerStore
+    from .services.account_reconciliation_scheduler import AccountReconciliationScheduler
+
+    account_ledger_store = AccountLedgerStore(runtime_settings.database_url or "sqlite:///data/account-ledger.db")
+    app.state.account_ledger_store = account_ledger_store
+    account_recon_scheduler = AccountReconciliationScheduler(
+        ledger_store=account_ledger_store,
+        gateway=account_gateway,
+        interval_seconds=300,
+    )
+    app.state.account_recon_scheduler = account_recon_scheduler
     from .services.trading_settings import TradingSettingsStore
 
     app.state.trading_settings_store = TradingSettingsStore(

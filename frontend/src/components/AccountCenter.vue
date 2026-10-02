@@ -15,6 +15,9 @@ const openOrderIds = ref<string[]>([]);
 const openOrderCount = ref(0);
 const fetchedAt = ref('');
 const trading = ref<{ auto_trading_enabled: boolean } | null>(null);
+const recon = ref<any>(null);
+const pause = ref<any>(null);
+const clearing = ref(false);
 const toggling = ref(false);
 const loading = ref(false);
 const error = ref('');
@@ -35,6 +38,12 @@ async function loadBalances() {
   fetchedAt.value = res.data.fetched_at || '';
 }
 
+async function loadRecon() {
+  const res = await api.get('/account/reconciliation');
+  recon.value = res.data;
+  pause.value = res.data.pause;
+}
+
 async function loadOrders() {
   const res = await api.get('/account/orders');
   openOrderIds.value = res.data.open_order_ids || [];
@@ -47,6 +56,7 @@ async function refresh() {
   try {
     await loadStatus();
     await loadTrading();
+    await loadRecon();
     if (status.value?.configured) {
       await loadBalances();
       await loadOrders();
@@ -71,6 +81,20 @@ async function toggleTrading() {
     error.value = e?.response?.data?.detail || '切换失败';
   } finally {
     toggling.value = false;
+  }
+}
+
+async function clearPause() {
+  if (!confirm('确定要解除安全暂停吗？请先确认对账异常原因已排查。')) return;
+  clearing.value = true;
+  try {
+    const res = await api.post('/account/pause/clear');
+    pause.value = res.data;
+    await loadRecon();
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || '解除失败';
+  } finally {
+    clearing.value = false;
   }
 }
 
@@ -146,6 +170,38 @@ onMounted(refresh);
       <ul class="order-list">
         <li v-for="id in openOrderIds" :key="id"><code>{{ id }}</code></li>
       </ul>
+    </div>
+
+    <div v-if="pause?.paused" class="alert error">
+      <ShieldCheck :size="16" />
+      <div>
+        <strong>安全暂停已触发</strong>
+        <p>{{ pause.reason }}</p>
+        <button class="btn" :disabled="clearing" @click="clearPause">解除暂停</button>
+      </div>
+    </div>
+
+    <div v-if="recon" class="panel">
+      <h3>对账状态</h3>
+      <p class="muted small">
+        调度器：{{ recon.running ? '运行中' : '已停止' }} ·
+        间隔 {{ recon.interval_seconds }} 秒 ·
+        网关：{{ recon.gateway_configured ? '已配置' : '未配置' }} ·
+        上次：{{ recon.last_run?.status || '未运行' }}
+      </p>
+      <div v-if="recon.recent_runs?.length">
+        <h4>最近对账</h4>
+        <table class="data-table">
+          <thead><tr><th>时间</th><th>结果</th><th>差异数</th></tr></thead>
+          <tbody>
+            <tr v-for="r in recon.recent_runs.slice(0, 5)" :key="r.run_id">
+              <td>{{ r.checked_at }}</td>
+              <td>{{ r.balanced ? '✓ 平衡' : '✗ 差异' }}</td>
+              <td>{{ r.differences?.length || 0 }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="panel">
