@@ -759,6 +759,7 @@ export type PaperFollowSnapshot = {
   orders: number;
   win_rate_pct: string;
   alerts: string[];
+  strategy_parameters?: Record<string, string | number | null>;
 };
 
 export type PaperFollowState = {

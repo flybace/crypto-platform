@@ -235,6 +235,16 @@ class PaperFollowService:
             return 0
 
 
+def _strategy_parameters_of(strategy_run: dict[str, Any]) -> dict[str, Any]:
+    """Extract the strategy-specific parameters recorded by the replay run."""
+    parameters = strategy_run.get("parameters")
+    if isinstance(parameters, dict):
+        nested = parameters.get("strategy_parameters")
+        if isinstance(nested, dict):
+            return {str(key): value for key, value in nested.items()}
+    return {}
+
+
 def execute_paper_follow(
     *,
     paper_automation: Any,
@@ -301,5 +311,6 @@ def execute_paper_follow(
         "max_drawdown_pct": str(_decimal(strategy_run.get("max_drawdown_pct", "0"), "max_drawdown_pct")),
         "orders": int(strategy_run.get("orders", 0)),
         "win_rate_pct": str(strategy_run.get("win_rate_pct", "0")),
+        "strategy_parameters": _strategy_parameters_of(strategy_run),
     }
     return follow_service.record_snapshot(snapshot)

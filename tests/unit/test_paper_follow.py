@@ -160,6 +160,7 @@ class _FakeAutomation:
                 "max_drawdown_pct": "4.00",
                 "orders": 6,
                 "win_rate_pct": "66.67",
+                "parameters": {"strategy_parameters": {"fast_period": 8, "slow_period": 26}},
             }
         }
 
@@ -170,10 +171,7 @@ class _FakePaperTrading:
 
     def run_strategy(self, *, venue_id, symbol, interval, config, run_id=None, record_task=True):
         self.calls.append({"run_id": run_id, "strategy_id": config.strategy_id})
-        return {
-            "run_id": run_id,
-            "total_return_pct": "2.00",
-        }
+        return {"run_id": run_id, "total_return_pct": "2.00"}
 
 
 class _FakeRegistry:
@@ -216,6 +214,7 @@ def test_execute_paper_follow_records_benchmark_comparison(tmp_path) -> None:
     assert snapshot["market_return_pct"] == "2.00"
     assert snapshot["excess_return_pct"] == "3.00"
     assert snapshot["strategy_id"] == "macd_reversal"
+    assert snapshot["strategy_parameters"] == {"fast_period": 8, "slow_period": 26}
     assert paper.calls and paper.calls[0]["strategy_id"] == "buy_and_hold"
     assert ("macd_reversal", "paper") in registry.asserted
     assert ("buy_and_hold", "paper") in registry.asserted

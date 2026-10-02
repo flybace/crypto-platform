@@ -3199,3 +3199,21 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 前端构建成功，Playwright 截图验证面板渲染（`crypto-shots/28-自动跟盯面板.png`）。
 
 当前边界：跟盯是"周期性历史回放 + 绩效记录"，不是实时逐笔跟单；调度器默认跟盯关闭，需在模拟盘页手动启用；快照不保证未来表现，不得直接用于真钱决策。
+
+### 31.39 2026-10-03 模拟盘完善：回放可带参数、可展开详情
+
+用户要求"完善模拟盘"。本轮把之前埋的坑补上：回放记录只能看汇总、参数看不到、手动回放调不了参。
+
+本轮新增：
+- 后端 `paper_follow.py`：`execute_paper_follow` 快照新增 `strategy_parameters`（从策略回放记录的 `parameters.strategy_parameters` 提取），跟盯时间线可知每次用的是哪套参数。
+- 前端 `PaperTradingCenter.vue`：
+  - "模拟策略回放"面板：按所选策略的 `parameter_schema` 动态生成参数输入（macd_reversal 快/慢/信号线等），提交时带入 `strategy_parameters`，调参结果可直接手动回放验证。
+  - "自动策略回放"面板：同理暴露 `strategy_parameters` 输入，保存进自动配置，跟盯调度沿用该套参数。
+  - "策略回放记录"：每条可展开——参数摘要、统计（胜率/盈亏笔数/最大回撤/手续费/K线数）、净值曲线柱状图、最近 8 条成交明细。
+  - "自动跟盯"时间线：每行可展开——参数、胜率、回放区间、K 线数。
+
+验证：
+- 单元测试：`tests/unit/test_paper_follow.py` 新增快照参数断言，15 passed。
+- 全量回归：unit + integration 299 passed；前端 `npm run build` 成功。
+- 真实链路：手动回放 `macd_reversal(fast=8, slow=26, signal=7)` 完成，记录含参数；跟盯一次，快照含 `{"fast":"8","signal":"7","slow":"26"}`。验证后跟盯与自动回放均恢复关闭。
+- Playwright 截图：`crypto-shots/29-模拟盘完善-回放参数.png`、`30-模拟盘完善-回放详情.png`、`31-模拟盘完善-跟盯详情.png`。
