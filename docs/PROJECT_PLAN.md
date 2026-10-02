@@ -3127,3 +3127,20 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 只有 **macd_reversal(8,26,7)** 通过交叉验证，在 BTC 和 ETH 上均为正收益且大幅跑赢基准，是目前唯一值得继续投入的策略。
 - volume_momentum 和 volatility_breakout 的 BTC 最优参数在 ETH 上亏损，判定为过拟合，不建议直接使用。
 - 系统暂无内置自动调参 API，本轮调参通过外部脚本调用回测接口完成；如需产品化，建议新增 `POST /api/v1/backtests/tune` 网格搜索端点。
+
+### 31.35 2026-10-02 自动调参系统功能（源码切片）
+
+用户明确：要把自动调参做成系统功能（其 A 股量化系统有此功能），不是用外部脚本跑。本轮将调参能力内置为平台一等功能。
+
+本轮新增（源码 + 自动测试）：
+
+- `backend/app/services/parameter_tuning.py`：`ParameterTuner` 网格搜索服务。输入策略 ID、参数网格、优化指标（总收益率/最大回撤/胜率，默认总收益率）、组合上限（默认 100），对每个参数组合调用 `BacktestRunManager.run` 做回测，按指标排序返回。失败组合计数不中断整体。
+- `POST /api/v1/backtests/tune`：调参 API，需认证。请求含 venue/symbol/interval/strategy_id/param_grids/metric/max_combinations 及回测基础配置；响应含 tune_id、各组合收益/回撤/胜率/交易数、最优参数。组合数超限返回 422。
+- `frontend/src/components/ParameterTuningPanel.vue`：回测中心新增"自动调参"面板。选择策略后自动按参数 Schema 生成默认网格（整数±4、浮点±30% 各 3 档），可手动改候选值；优化目标可选总收益/最小回撤/胜率；一键调参，结果表高亮最优行，显示前 10 名。
+- 6 个单测覆盖：最优选择、空网格拒绝、超限拒绝、非法指标拒绝、越小越优指标、运行失败容错。
+
+验证：
+- 后端 368 passed（6 新增）；前端构建成功；真实浏览器确认调参面板渲染正常。
+- 实测 `volatility_breakout` 4 组合调参：最优 (window=10, atr_multiplier=1.5) +11.28%，与脚本版结果一致。
+
+当前边界：同步执行，大网格（>100 组合）需分批；未做异步任务队列版本。31.34 的脚本调参结论依然有效。

@@ -285,3 +285,93 @@ def delete_run(run_id: str, request: Request, _: object = Depends(require_user))
 @router.delete("/runs")
 def delete_runs(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
     return {"status": "deleted", "deleted": _manager(request).clear()}
+
+
+class ParameterTuneRequest(BaseModel):
+    venue_id: str = Field(min_length=1, max_length=32)
+    symbol: str = Field(min_length=2, max_length=32)
+    interval: Literal["1d", "1h", "5m"] = "1d"
+    strategy_id: str = Field(min_length=1, max_length=64)
+    param_grids: dict[str, list[Any]] = Field(
+        description="Parameter name -> list of values to try",
+        min_length=1, max_length=10,
+    )
+    metric: str = Field(
+        default="total_return_pct",
+        description="Optimization metric: total_return_pct, max_drawdown_pct, win_rate_pct",
+    )
+    max_combinations: int = Field(default=50, ge=1, le=200)
+    initial_quote: Decimal = Field(default=Decimal("10000"), gt=0)
+    initial_base: Decimal = Field(default=Decimal("0"), ge=0)
+    fee_bps: Decimal = Field(default=Decimal("10"), ge=0, le=1000)
+    slippage_bps: Decimal = Field(default=Decimal("5"), ge=0, le=1000)
+    fast_window: int = Field(default=10, ge=2, le=500)
+    slow_window: int = Field(default=30, ge=3, le=1000)
+    allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
+    momentum_threshold_pct: Decimal = Field(default=Decimal("0.02"), ge=0, le=10)
+
+    @model_validator(mode="after")
+    def validate_grids(self) -> "ParameterTuneRequest":
+        total = 1
+        for key, values in self.param_grids.items():
+            if not isinstance(values, list) or not values:
+                raise ValueError(f"param_grids[{key}] must be a non-empty list")
+            if len(values) > 20:
+                raise ValueError(f"param_grids[{key}] has too many values (max 20)")
+            total *= len(values)
+        if total > self.max_combinations:
+            raise ValueError(
+                f"parameter grid has {total} combinations, exceeds max_combinations={self.max_combinations}"
+            )
+        return self
+
+
+@router.post("/tune", status_code=status.HTTP_201_CREATED)
+def tune_parameters(
+    payload: ParameterTuneRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    """Grid-search parameter tuning for a strategy.
+
+    Runs a backtest for each parameter combination and ranks by the
+    optimization metric. Synchronous; bounded by max_combinations.
+    """
+    try:
+        request.app.state.strategy_registry.assert_enabled(payload.strategy_id, "backtest")
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    from ..services.parameter_tuning import ParameterTuner
+
+    config = CandleBacktestConfig(
+        strategy_id=payload.strategy_id,
+        initial_quote=payload.initial_quote,
+        initial_base=payload.initial_base,
+        fee_bps=payload.fee_bps,
+        slippage_bps=payload.slippage_bps,
+        fast_window=payload.fast_window,
+        slow_window=payload.slow_window,
+        allocation_ratio=payload.allocation_ratio,
+        momentum_threshold_pct=payload.momentum_threshold_pct,
+        parameters={},
+    )
+    tuner = ParameterTuner(
+        request.app.state.backtest_runs,
+        max_combinations=payload.max_combinations,
+    )
+    try:
+        result = tuner.tune(
+            strategy_id=payload.strategy_id,
+            venue_id=payload.venue_id,
+            symbol=payload.symbol,
+            interval=payload.interval,
+            param_grids=payload.param_grids,
+            base_config=config,
+            metric=payload.metric,
+            max_combinations=payload.max_combinations,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except BacktestDataError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return result.as_dict()
