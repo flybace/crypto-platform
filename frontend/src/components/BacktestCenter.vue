@@ -133,6 +133,31 @@ const applyPreset = (preset: { parameters: Record<string, any> }) => {
   showPresetPicker.value = false;
 };
 
+const applyPresetToPaper = async (preset: { name: string; parameters: Record<string, any>; metrics?: Record<string, any> }) => {
+  if (!selectedDataset.value || !selectedStrategy.value) return;
+  const passed = preset.metrics?.overfit_guard_passed;
+  if (passed === false) {
+    if (!window.confirm(`预设「${preset.name}」未通过过拟合检查，仍要应用到模拟盘吗？`)) {
+      return;
+    }
+  }
+  try {
+    const { data } = await api.post('/paper/strategy-runs', {
+      venue_id: selectedDataset.value.venue_id,
+      symbol: selectedDataset.value.instrument_key.split(':').pop() || selectedDataset.value.native_symbol,
+      interval: selectedDataset.value.interval,
+      strategy_id: selectedStrategy.value,
+      strategy_parameters: preset.parameters || {},
+    });
+    taskMessage.value = isQueuedTask(data)
+      ? `预设「${preset.name}」已提交模拟盘排队，可在模拟盘页面查看`
+      : `预设「${preset.name}」已在模拟盘上运行`;
+    showPresetPicker.value = false;
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || e.message || '应用到模拟盘失败';
+  }
+};
+
 const formatPresetMeta = (p: { metrics?: Record<string, any> }) => {
   const m = p.metrics || {};
   const r = m.validation_total_return_pct ?? m.total_return_pct;
@@ -264,7 +289,7 @@ onMounted(loadData);
           <div class="backtest-field-grid"><label class="backtest-field"><span>初始 USDT</span><input v-model="initialQuote" type="number" min="1" step="100" /></label><label class="backtest-field"><span>初始币数量</span><input v-model="initialBase" type="number" min="0" step="0.001" /></label></div>
           <div class="backtest-field-grid"><label class="backtest-field"><span>费率（bps）</span><input v-model="feeBps" type="number" min="0" step="1" /></label><label class="backtest-field"><span>滑点（bps）</span><input v-model="slippageBps" type="number" min="0" step="1" /></label></div>
           <div class="backtest-field-grid"><label class="backtest-field"><span>快窗口</span><input v-model="fastWindow" type="number" min="2" step="1" /></label><label class="backtest-field"><span>慢窗口</span><input v-model="slowWindow" type="number" min="3" step="1" /></label></div>
-          <div v-if="parameterFields.length" class="parameter-section"><div class="parameter-heading"><span>策略专属参数</span><small>{{ parameterFields.length }} FIELDS</small><button v-if="presets.length" class="preset-load-button" type="button" @click="showPresetPicker = !showPresetPicker">加载预设</button></div><div v-if="showPresetPicker && presets.length" class="preset-picker"><button v-for="p in presets" :key="p.preset_id" type="button" class="preset-option" @click="applyPreset(p)"><strong>{{ p.name }}</strong><small>{{ formatPresetMeta(p) }}</small></button></div><div class="backtest-field-grid"><label v-for="field in parameterFields" :key="field.key" class="backtest-field"><span>{{ field.label }}</span><input v-model="strategyParameters[field.key]" :type="field.type === 'integer' ? 'number' : 'number'" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div></div>
+          <div v-if="parameterFields.length" class="parameter-section"><div class="parameter-heading"><span>策略专属参数</span><small>{{ parameterFields.length }} FIELDS</small><button v-if="presets.length" class="preset-load-button" type="button" @click="showPresetPicker = !showPresetPicker">加载预设</button></div><div v-if="showPresetPicker && presets.length" class="preset-picker"><div v-for="p in presets" :key="p.preset_id" class="preset-row"><button type="button" class="preset-option" @click="applyPreset(p)"><strong>{{ p.name }}</strong><small>{{ formatPresetMeta(p) }}</small></button><button type="button" class="preset-paper-btn" title="应用到模拟盘" @click="applyPresetToPaper(p)">模拟盘</button></div></div><div class="backtest-field-grid"><label v-for="field in parameterFields" :key="field.key" class="backtest-field"><span>{{ field.label }}</span><input v-model="strategyParameters[field.key]" :type="field.type === 'integer' ? 'number' : 'number'" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div></div>
           <div class="backtest-field-grid"><label class="backtest-field"><span>开始日（可选）</span><input v-model="startAt" type="date" /></label><label class="backtest-field"><span>结束日（可选）</span><input v-model="endAt" type="date" /></label></div>
           <button class="backtest-submit" type="button" :disabled="running || !selectedDataset" @click="runBacktest"><Play v-if="!running" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ running ? '运行中' : '运行回测' }}</span></button>
         </form>
@@ -325,8 +350,11 @@ onMounted(loadData);
 .parameter-heading small { color: var(--dim); font-size: 9px; letter-spacing: .08em; }
 .preset-load-button { background: none; border: 1px solid var(--cyan); border-radius: 4px; color: var(--cyan); font-size: 10px; padding: 3px 10px; cursor: pointer; }
 .preset-picker { display: grid; gap: 6px; margin: 8px 0; }
-.preset-option { display: flex; justify-content: space-between; align-items: center; background: var(--input-bg); border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; cursor: pointer; color: var(--ink); font-size: 11px; text-align: left; }
+.preset-row { display: flex; gap: 6px; }
+.preset-option { flex: 1; display: flex; justify-content: space-between; align-items: center; background: var(--input-bg); border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; cursor: pointer; color: var(--ink); font-size: 11px; text-align: left; }
 .preset-option:hover { border-color: var(--cyan); }
+.preset-paper-btn { background: rgba(240,168,50,.08); border: 1px solid rgba(240,168,50,.4); border-radius: 4px; color: var(--amber, #f0a832); font-size: 10px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.preset-paper-btn:hover { background: rgba(240,168,50,.16); }
 .preset-option small { color: var(--dim); }
 .backtest-field { display: grid; gap: 7px; min-width: 0; color: var(--muted); font-size: 11px; }
 .backtest-field input, .backtest-field select { width: 100%; min-height: 38px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; color: var(--ink); background: var(--input-bg); outline: none; }

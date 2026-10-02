@@ -81,6 +81,8 @@ const showHistory = ref(false);
 const presetName = ref('');
 const presetSaved = ref('');
 const savingPreset = ref(false);
+const applyingToPaper = ref(false);
+const paperApplied = ref('');
 
 const selectedDef = computed(() =>
   props.strategies.find((s) => s.strategy_id === selectedStrategy.value)
@@ -213,6 +215,38 @@ async function savePreset() {
   }
 }
 
+async function applyToPaper() {
+  if (!result.value?.best || !selectedStrategy.value) return;
+  const best = result.value.best;
+  // Warn when the best params did not pass the overfitting guard
+  if (hasValidation.value && best.overfit_guard_passed === false) {
+    if (!window.confirm('该参数未通过过拟合检查（验证窗口不盈利），仍要应用到模拟盘吗？')) {
+      return;
+    }
+  }
+  applyingToPaper.value = true;
+  paperApplied.value = '';
+  error.value = '';
+  try {
+    const res = await api.post('/paper/strategy-runs', {
+      venue_id: props.venueId,
+      symbol: props.symbol,
+      interval: props.interval,
+      strategy_id: selectedStrategy.value,
+      strategy_parameters: best.params,
+    });
+    if (isQueuedTask(res.data)) {
+      paperApplied.value = `已提交模拟盘排队 · ${res.data.task_id}，可在模拟盘页面查看`;
+    } else {
+      paperApplied.value = '已在模拟盘上运行，可在模拟盘页面查看结果';
+    }
+  } catch (e: any) {
+    error.value = e?.response?.data?.detail || e.message || '应用到模拟盘失败';
+  } finally {
+    applyingToPaper.value = false;
+  }
+}
+
 const fmtPct = (v: number | null | undefined) =>
   v === null || v === undefined ? '—' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`;
 
@@ -335,7 +369,12 @@ onMounted(loadHistory);
           <Save :size="13" />
           <span>{{ savingPreset ? '保存中…' : '保存为参数预设' }}</span>
         </button>
+        <button class="paper-button" :disabled="applyingToPaper" @click="applyToPaper">
+          <Play :size="13" />
+          <span>{{ applyingToPaper ? '提交中…' : '应用到模拟盘' }}</span>
+        </button>
         <span v-if="presetSaved" class="preset-ok">{{ presetSaved }}</span>
+        <span v-if="paperApplied" class="preset-ok">{{ paperApplied }}</span>
       </div>
       <table class="data-table">
         <thead>
@@ -408,6 +447,8 @@ onMounted(loadHistory);
 .preset-save input { min-height: 34px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 6px 10px; background: var(--input-bg); color: var(--ink); font-size: 12px; flex: 1; min-width: 180px; }
 .preset-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--cyan); border-radius: 6px; background: rgba(108,229,208,.1); color: var(--cyan); cursor: pointer; font-size: 12px; }
 .preset-button:disabled { opacity: .5; cursor: not-allowed; }
+.paper-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px solid var(--amber, #f0a832); border-radius: 6px; background: rgba(240,168,50,.1); color: var(--amber, #f0a832); cursor: pointer; font-size: 12px; }
+.paper-button:disabled { opacity: .5; cursor: not-allowed; }
 .preset-ok { color: var(--cyan); font-size: 11px; }
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
