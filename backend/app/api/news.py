@@ -52,10 +52,15 @@ def events(
     topic: str | None = Query(default=None, max_length=80),
     sentiment: Literal["all", "positive", "neutral", "risk"] = "all",
     limit: int = Query(default=50, ge=1, le=200),
+    start_at: datetime | None = Query(default=None),
+    end_at: datetime | None = Query(default=None),
     _: object = Depends(require_user),
 ) -> dict[str, object]:
     try:
-        items = _service(request).events(symbol=symbol, topic=topic, sentiment=sentiment, limit=limit)
+        items = _service(request).events(
+            symbol=symbol, topic=topic, sentiment=sentiment, limit=limit,
+            start_at=start_at, end_at=end_at,
+        )
     except NewsError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return {"items": items, "count": len(items), "research_only": True}

@@ -109,6 +109,8 @@ class NewsService:
         topic: str | None = None,
         sentiment: str = "all",
         limit: int = 50,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
     ) -> list[dict[str, object]]:
         normalized_symbol = str(symbol or "").strip().upper()
         normalized_topic = str(topic or "").strip().lower()
@@ -128,6 +130,15 @@ class NewsService:
                     continue
                 if normalized_sentiment != "all" and item.get("sentiment") != normalized_sentiment:
                     continue
+                if start_at is not None or end_at is not None:
+                    try:
+                        published = datetime.fromisoformat(str(item.get("published_at", "")).replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if start_at is not None and published < start_at:
+                        continue
+                    if end_at is not None and published > end_at:
+                        continue
                 filtered.append(deepcopy(item))
             return filtered[: max(1, min(int(limit), 200))]
 

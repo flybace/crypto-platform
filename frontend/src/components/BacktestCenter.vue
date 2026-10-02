@@ -19,6 +19,10 @@ const slippageBps = ref('5');
 const fastWindow = ref('10');
 const slowWindow = ref('30');
 const strategyParameters = ref<Record<string, string | number>>({});
+const presets = ref<Array<{ preset_id: string; name: string; parameters: Record<string, any>; metrics?: Record<string, any> }>>([]);
+const showPresetPicker = ref(false);
+const runNews = ref<Array<{ event_id: string; title: string; published_at: string; sentiment: string; risk_level: string; impact_score: string }>>([]);
+const loadingNews = ref(false);
 const startAt = ref('');
 const endAt = ref('');
 const currentRun = ref<BacktestRun | null>(null);
@@ -107,13 +111,78 @@ const initializeStrategyParameters = () => {
   );
 };
 
-watch(selectedDatasetId, () => {
-  currentRun.value = null;
-});
+const loadPresets = async () => {
+  if (!selectedStrategy.value) {
+    presets.value = [];
+    return;
+  }
+  try {
+    const { data } = await api.get('/backtests/presets', {
+      params: { strategy_id: selectedStrategy.value, limit: 50 },
+    });
+    presets.value = data.items || [];
+  } catch {
+    presets.value = [];
+  }
+};
+
+const applyPreset = (preset: { parameters: Record<string, any> }) => {
+  for (const [k, v] of Object.entries(preset.parameters || {})) {
+    strategyParameters.value[k] = v;
+  }
+  showPresetPicker.value = false;
+};
+
+const formatPresetMeta = (p: { metrics?: Record<string, any> }) => {
+  const m = p.metrics || {};
+  const r = m.validation_total_return_pct ?? m.total_return_pct;
+  if (r === undefined || r === null) return '';
+  return `验证收益 ${Number(r) >= 0 ? '+' : ''}${Number(r).toFixed(2)}%`;
+};
 
 watch(selectedStrategy, () => {
   currentRun.value = null;
   initializeStrategyParameters();
+  loadPresets();
+});
+
+const loadRunNews = async () => {
+  runNews.value = [];
+  const run = currentRun.value;
+  if (!run?.start_at || !run?.end_at) return;
+  // Extract base symbol from dataset instrument key
+  const instrumentKey = (run as any).dataset?.instrument_key || '';
+  const symbol = instrumentKey.split(':').pop()?.split('/')[0] || '';
+  if (!symbol) return;
+  loadingNews.value = true;
+  try {
+    const { data } = await api.get('/news/events', {
+      params: {
+        symbol,
+        start_at: run.start_at,
+        end_at: run.end_at,
+        limit: 20,
+      },
+    });
+    runNews.value = data.items || [];
+  } catch {
+    runNews.value = [];
+  } finally {
+    loadingNews.value = false;
+  }
+};
+
+watch(currentRun, () => {
+  loadRunNews();
+});
+
+const newsSentimentLabel = (s: string) =>
+  ({ positive: '利好', neutral: '中性', risk: '风险' } as Record<string, string>)[s] || s;
+const newsSentimentClass = (s: string) =>
+  s === 'positive' ? 'positive' : s === 'risk' ? 'negative' : '';
+
+watch(selectedDatasetId, () => {
+  currentRun.value = null;
 });
 
 const runBacktest = async () => {
@@ -195,7 +264,7 @@ onMounted(loadData);
           <div class="backtest-field-grid"><label class="backtest-field"><span>初始 USDT</span><input v-model="initialQuote" type="number" min="1" step="100" /></label><label class="backtest-field"><span>初始币数量</span><input v-model="initialBase" type="number" min="0" step="0.001" /></label></div>
           <div class="backtest-field-grid"><label class="backtest-field"><span>费率（bps）</span><input v-model="feeBps" type="number" min="0" step="1" /></label><label class="backtest-field"><span>滑点（bps）</span><input v-model="slippageBps" type="number" min="0" step="1" /></label></div>
           <div class="backtest-field-grid"><label class="backtest-field"><span>快窗口</span><input v-model="fastWindow" type="number" min="2" step="1" /></label><label class="backtest-field"><span>慢窗口</span><input v-model="slowWindow" type="number" min="3" step="1" /></label></div>
-          <div v-if="parameterFields.length" class="parameter-section"><div class="parameter-heading"><span>策略专属参数</span><small>{{ parameterFields.length }} FIELDS</small></div><div class="backtest-field-grid"><label v-for="field in parameterFields" :key="field.key" class="backtest-field"><span>{{ field.label }}</span><input v-model="strategyParameters[field.key]" :type="field.type === 'integer' ? 'number' : 'number'" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div></div>
+          <div v-if="parameterFields.length" class="parameter-section"><div class="parameter-heading"><span>策略专属参数</span><small>{{ parameterFields.length }} FIELDS</small><button v-if="presets.length" class="preset-load-button" type="button" @click="showPresetPicker = !showPresetPicker">加载预设</button></div><div v-if="showPresetPicker && presets.length" class="preset-picker"><button v-for="p in presets" :key="p.preset_id" type="button" class="preset-option" @click="applyPreset(p)"><strong>{{ p.name }}</strong><small>{{ formatPresetMeta(p) }}</small></button></div><div class="backtest-field-grid"><label v-for="field in parameterFields" :key="field.key" class="backtest-field"><span>{{ field.label }}</span><input v-model="strategyParameters[field.key]" :type="field.type === 'integer' ? 'number' : 'number'" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div></div>
           <div class="backtest-field-grid"><label class="backtest-field"><span>开始日（可选）</span><input v-model="startAt" type="date" /></label><label class="backtest-field"><span>结束日（可选）</span><input v-model="endAt" type="date" /></label></div>
           <button class="backtest-submit" type="button" :disabled="running || !selectedDataset" @click="runBacktest"><Play v-if="!running" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ running ? '运行中' : '运行回测' }}</span></button>
         </form>
@@ -209,12 +278,31 @@ onMounted(loadData);
           <div class="result-summary"><article><span>总收益</span><strong :class="Number(currentRun.total_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatPct(currentRun.total_return_pct) }}</strong><em>{{ formatNumber(currentRun.initial_equity) }} → {{ formatNumber(currentRun.final_equity) }}</em></article><article><span>最大回撤</span><strong class="negative">-{{ formatPct(currentRun.max_drawdown_pct).replace('+', '') }}</strong><em>{{ formatNumber(currentRun.max_drawdown_quote) }} USDT</em></article><article><span>交易次数</span><strong>{{ currentRun.orders }}</strong><em>{{ currentRun.round_trips }} 个完整轮次</em></article><article><span>手续费</span><strong>{{ formatNumber(currentRun.fees_quote) }}</strong><em>USDT</em></article></div>
           <div class="equity-block"><div class="result-subhead"><strong>净值曲线</strong><span>{{ currentRun.candle_count }} 根 K 线 · {{ formatTime(currentRun.start_at) }} 至 {{ formatTime(currentRun.end_at) }}</span></div><div class="equity-bars" aria-label="净值曲线"><span v-for="point in curveBars" :key="point.timestamp" class="equity-bar" :style="{ height: point.height }" :title="`${formatTime(point.timestamp)} · ${formatNumber(point.equity)} USDT`" /></div></div>
           <div class="trade-block"><div class="result-subhead"><strong>成交记录</strong><span>{{ currentRun.trade_log.length }} 条</span></div><div class="trade-list"><div v-for="trade in currentRun.trade_log.slice(-8).reverse()" :key="`${trade.timestamp}-${trade.side}`" class="trade-row"><span :class="trade.side === 'BUY' ? 'positive' : 'negative'">{{ trade.side === 'BUY' ? '买入' : '卖出' }}</span><span>{{ formatTime(trade.timestamp) }}</span><strong>{{ formatNumber(trade.price) }}</strong><span>{{ formatNumber(trade.quantity) }}</span><small>{{ trade.reason }}</small></div></div></div>
+          <div class="news-block">
+            <div class="result-subhead"><strong>消息面时间线</strong><span>{{ runNews.length }} 条相关新闻</span></div>
+            <div v-if="loadingNews" class="muted">加载新闻中…</div>
+            <div v-else-if="!runNews.length" class="muted">回测区间内暂无收录新闻</div>
+            <div v-else class="news-list">
+              <div v-for="n in runNews" :key="n.event_id" class="news-row">
+                <span :class="['news-sentiment', newsSentimentClass(n.sentiment)]">{{ newsSentimentLabel(n.sentiment) }}</span>
+                <span class="news-time">{{ formatTime(n.published_at) }}</span>
+                <span class="news-title">{{ n.title }}</span>
+                <span v-if="n.risk_level === 'high'" class="news-risk">高风险</span>
+              </div>
+            </div>
+            <p class="muted">新闻仅供复盘参考：回测是纯技术信号，不含消息面过滤。若回撤恰好发生在风险新闻附近，实盘时应考虑消息风控。</p>
+          </div>
         </template>
       </section>
     </section>
 
     <section class="backtest-panel run-history-panel" aria-labelledby="run-history-title"><div class="section-heading"><div><p class="kicker">RUN ARCHIVE</p><h2 id="run-history-title">回测记录</h2></div><div class="run-history-actions"><span class="section-meta">{{ runs.length }} RUNS</span><button class="icon-button" type="button" title="清空回测记录" aria-label="清空回测记录" :disabled="!runs.length" @click="clearRuns"><Trash2 :size="15" /></button></div></div><div v-if="!runs.length" class="backtest-empty compact"><BarChart3 :size="20" /><p>还没有回测记录</p></div><div v-else class="run-list"><article v-for="run in runs" :key="run.run_id" class="run-row" @click="currentRun = run"><div class="run-mark"><Check :size="14" /></div><div><strong>{{ strategyName(run.strategy_id) }}</strong><span>{{ run.dataset.venue_id.toUpperCase() }} · {{ run.dataset.instrument_key.split(':').pop() }} · {{ formatTime(run.created_at) }}</span></div><b :class="Number(run.total_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatPct(run.total_return_pct) }}</b><span class="state-pill connected">已完成</span><button class="icon-button run-delete" type="button" title="删除这条回测记录" aria-label="删除这条回测记录" @click.stop="deleteRun(run.run_id)"><Trash2 :size="14" /></button></article></div></section>
-      <ParameterTuningPanel :strategies="strategies" venue-id="binance" symbol="BTC/USDT" interval="1d" />
+      <ParameterTuningPanel
+        :strategies="strategies"
+        :venue-id="selectedDataset?.venue_id || 'binance'"
+        :symbol="selectedDataset ? (selectedDataset.instrument_key.split(':').pop() || selectedDataset.native_symbol) : 'BTC/USDT'"
+        :interval="selectedDataset?.interval || '1d'"
+      />
   </section>
 </template>
 
@@ -235,6 +323,11 @@ onMounted(loadData);
 .parameter-section { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
 .parameter-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
 .parameter-heading small { color: var(--dim); font-size: 9px; letter-spacing: .08em; }
+.preset-load-button { background: none; border: 1px solid var(--cyan); border-radius: 4px; color: var(--cyan); font-size: 10px; padding: 3px 10px; cursor: pointer; }
+.preset-picker { display: grid; gap: 6px; margin: 8px 0; }
+.preset-option { display: flex; justify-content: space-between; align-items: center; background: var(--input-bg); border: 1px solid var(--line); border-radius: 4px; padding: 7px 10px; cursor: pointer; color: var(--ink); font-size: 11px; text-align: left; }
+.preset-option:hover { border-color: var(--cyan); }
+.preset-option small { color: var(--dim); }
 .backtest-field { display: grid; gap: 7px; min-width: 0; color: var(--muted); font-size: 11px; }
 .backtest-field input, .backtest-field select { width: 100%; min-height: 38px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; color: var(--ink); background: var(--input-bg); outline: none; }
 .backtest-field input:focus, .backtest-field select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
@@ -257,7 +350,15 @@ onMounted(loadData);
 .result-summary strong { align-self: center; color: var(--ink); font-size: 20px; font-weight: 570; }
 .positive { color: var(--cyan) !important; }
 .negative { color: var(--red) !important; }
-.equity-block, .trade-block { margin-top: 23px; }
+.equity-block, .trade-block, .news-block { margin-top: 23px; }
+.news-list { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; }
+.news-row { display: flex; gap: 10px; align-items: baseline; font-size: 11px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.news-sentiment { font-size: 10px; padding: 1px 7px; border-radius: 9px; border: 1px solid var(--line); white-space: nowrap; }
+.news-sentiment.positive { color: var(--cyan); border-color: rgba(108,229,208,.35); }
+.news-sentiment.negative { color: var(--red); border-color: rgba(255,90,90,.35); }
+.news-time { color: var(--dim); white-space: nowrap; font-size: 10px; }
+.news-title { flex: 1; color: var(--ink); }
+.news-risk { font-size: 10px; color: var(--red); border: 1px solid rgba(255,90,90,.4); border-radius: 9px; padding: 1px 7px; white-space: nowrap; }
 .result-subhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
 .result-subhead strong { color: var(--ink); font-size: 12px; font-weight: 560; }
 .result-subhead span { color: var(--dim); font-size: 9px; }

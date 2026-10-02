@@ -37,6 +37,35 @@ class BacktestRunManager:
         self._state = state_store or (JsonStateStore(state_path) if state_path else None)
         self._load()
 
+    def dataset_time_range(
+        self,
+        *,
+        venue_id: str,
+        symbol: str,
+        interval: str,
+    ) -> tuple[object, object]:
+        """Return (start_at, end_at) of the verified history dataset.
+
+        Used by parameter tuning to split train/validation windows.
+        Raises BacktestDataError when the dataset is missing or fails the quality gate.
+        """
+        try:
+            venue = str(venue_id).strip().lower()
+            base, quote, _ = normalize_symbol(venue, symbol)
+            instrument_key = f"{venue}:spot:{base}/{quote}"
+            dataset = self._storage.find_dataset(
+                venue_id=venue,
+                instrument_key=instrument_key,
+                interval=interval,
+            )
+        except HistoryStorageError as error:
+            raise BacktestDataError("verified history is unavailable") from error
+        if dataset is None:
+            raise BacktestDataError("verified history dataset was not found")
+        if dataset.manifest.gap_count or dataset.manifest.duplicate_count:
+            raise BacktestDataError("history dataset quality gate did not pass")
+        return (dataset.manifest.start_at, dataset.manifest.end_at)
+
     def run(
         self,
         *,

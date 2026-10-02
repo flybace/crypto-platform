@@ -25,6 +25,7 @@ TASK_KINDS = frozenset(
         "paper_strategy",
         "paper_automation",
         "strategy_matrix",
+        "parameter_tune",
     }
 )
 TASK_PREFIXES = {
@@ -36,6 +37,7 @@ TASK_PREFIXES = {
     "paper_strategy": "paper-strategy",
     "paper_automation": "paper-automation",
     "strategy_matrix": "strategy-matrix",
+    "parameter_tune": "parameter-tune",
 }
 REPLAYABLE_TASK_KINDS = TASK_KINDS | {"history_download"}
 TERMINAL_STATUSES = frozenset(
