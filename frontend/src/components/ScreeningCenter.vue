@@ -139,7 +139,7 @@ onMounted(loadData);
 .screening-panel { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 20px 19px; background: var(--panel); }
 .screening-form { display: grid; gap: 14px; }
 .screening-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
-.screening-form input, .screening-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.screening-form input, .screening-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .screening-form input:focus, .screening-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .screening-form small { color: var(--dim); font-size: 10px; line-height: 1.45; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

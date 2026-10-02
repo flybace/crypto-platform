@@ -100,7 +100,7 @@ onMounted(loadStrategies);
 .strategy-tags span { border: 1px solid var(--line); padding: 4px 7px; color: var(--dim); font-size: 9px; }
 .strategy-toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: 9px; white-space: nowrap; }
 .strategy-toggle input { position: absolute; opacity: 0; pointer-events: none; }
-.toggle-box { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line-bright); color: transparent; background: #13191b; }
+.toggle-box { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--line-bright); color: transparent; background: var(--input-bg); }
 .strategy-toggle input:checked + .toggle-box { border-color: var(--cyan); color: #11201e; background: var(--cyan); }
 .strategy-toggle input:focus-visible + .toggle-box { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .strategy-toggle.saving { opacity: .55; }

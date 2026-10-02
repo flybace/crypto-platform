@@ -504,14 +504,14 @@ fieldset { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; }
 legend, .history-field > span { margin-bottom: 7px; color: var(--muted); font-size: 11px; }
 .venue-choice { display: grid; grid-template-columns: 16px 17px 1fr; align-items: center; gap: 8px; min-height: 37px; color: var(--muted); cursor: pointer; }
 .venue-choice input { position: absolute; opacity: 0; pointer-events: none; }
-.check-box { display: grid; place-items: center; width: 17px; height: 17px; border: 1px solid var(--line-bright); color: transparent; background: #13191b; }
+.check-box { display: grid; place-items: center; width: 17px; height: 17px; border: 1px solid var(--line-bright); color: transparent; background: var(--input-bg); }
 .venue-choice input:checked + .check-box { border-color: var(--cyan); color: #12201e; background: var(--cyan); }
 .venue-choice input:focus-visible + .check-box { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .venue-choice strong, .venue-choice small { display: block; }
 .venue-choice strong { color: var(--ink); font-size: 12px; font-weight: 550; }
 .venue-choice small { margin-top: 3px; color: var(--dim); font-size: 10px; }
 .history-field { display: grid; gap: 0; }
-.history-field input, .history-field select { width: 100%; min-width: 0; max-width: 100%; min-height: 39px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 9px 11px; color: var(--ink); background: #13191b; outline: none; }
+.history-field input, .history-field select { width: 100%; min-width: 0; max-width: 100%; min-height: 39px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 9px 11px; color: var(--ink); background: var(--input-bg); outline: none; }
 .history-field input:focus, .history-field select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .date-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .history-submit { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 41px; margin-top: 2px; border: 1px solid var(--cyan); border-radius: 5px; color: #11201e; background: var(--cyan); font-size: 12px; font-weight: 720; }

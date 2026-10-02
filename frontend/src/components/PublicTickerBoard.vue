@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from 'vue';
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, CandlestickChart, CircleAlert, RefreshCw, Search, WifiOff } from 'lucide-vue-next';
+import { ArrowLeft, ArrowRight, CircleAlert, RefreshCw, Search, WifiOff } from 'lucide-vue-next';
 import { api } from '../api';
 import type { PublicTickerItem, PublicTickerMarket, PublicTickerResponse } from '../types';
 
@@ -100,9 +100,7 @@ const formatTime = (value: string | null | undefined) => {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? '—' : parsed.toLocaleTimeString('zh-CN', { hour12: false });
 };
-const changeClass = (value: string | null | undefined) => Number(value) >= 0 ? 'positive' : 'negative';
-const trendLabel = (trend: string) => trend === 'up' ? '上涨' : trend === 'down' ? '下跌' : '横盘';
-const trendIcon = (trend: string) => trend === 'down' ? ArrowDown : trend === 'up' ? ArrowUp : null;
+const changeClass = (value: string | null | undefined) => Number(value) >= 0 ? 'up' : 'down';
 const rangePosition = (item: PublicTickerItem) => {
   const values = venueIds.map((venue) => Number(market(item, venue)?.range_position_pct)).filter(Number.isFinite);
   return values.length ? Math.max(0, Math.min(100, values.reduce((sum, value) => sum + value, 0) / values.length)) : 0;
@@ -155,40 +153,40 @@ onUnmounted(() => {
     <div v-else-if="data && data.items.length" class="ticker-table-wrap">
       <table class="ticker-table">
         <thead>
-          <tr>
-            <th>币种</th>
-            <th v-for="venue in venueIds" :key="venue">{{ venueLabels[venue] }}价格 / 24H</th>
-            <th>24H走势</th>
-            <th>24H区间</th>
-            <th>跨市场价差</th>
-            <th>成交额</th>
+          <tr class="venue-group-row">
+            <th rowspan="2">币种</th>
+            <th v-for="venue in venueIds" :key="venue" colspan="2" class="venue-group">{{ venueLabels[venue] }}</th>
+            <th rowspan="2">价差</th>
+            <th rowspan="2">24H区间</th>
+            <th rowspan="2">成交额</th>
+          </tr>
+          <tr class="venue-sub-row">
+            <template v-for="venue in venueIds" :key="venue">
+              <th class="num">最新</th>
+              <th class="num">涨跌</th>
+            </template>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in data.items" :key="item.symbol">
+          <tr v-for="item in data.items" :key="item.symbol" class="quote-row" @click="openCoin(item)">
             <td class="ticker-symbol">
-              <button class="ticker-symbol-trigger" type="button" :aria-label="`查看 ${item.symbol} 的市场详情和走势图`" @click="openCoin(item)">
-                <strong>{{ item.base_asset }}</strong><small>{{ item.symbol }}</small>
-                <span class="ticker-detail-action"><CandlestickChart :size="14" />查看走势</span>
-              </button>
+              <strong>{{ item.base_asset }}</strong><small>{{ item.symbol }}</small>
             </td>
-            <td v-for="venue in venueIds" :key="`${item.symbol}-${venue}`" class="venue-quote" :class="{ best: item.best_venue_id === venue }">
-              <template v-if="market(item, venue)">
-                <strong>{{ formatPrice(market(item, venue)?.last_price) }}</strong>
-                <small :class="changeClass(market(item, venue)?.change_pct)">{{ formatPct(market(item, venue)?.change_pct) }}</small>
-              </template>
-              <span v-else class="missing-quote">—</span>
-            </td>
-            <td class="trend-cell">
-              <span class="trend-pill" :class="item.trend"><component v-if="trendIcon(item.trend)" :is="trendIcon(item.trend)" :size="13" />{{ trendLabel(item.trend) }}</span>
-              <small>{{ formatPct(item.change_pct) }}</small>
-            </td>
+            <template v-for="venue in venueIds" :key="`${item.symbol}-${venue}`">
+              <td v-if="market(item, venue)" class="num price" :class="{ best: item.best_venue_id === venue }">
+                {{ formatPrice(market(item, venue)?.last_price) }}
+              </td>
+              <td v-else class="num missing-quote">—</td>
+              <td v-if="market(item, venue)" class="num" :class="changeClass(market(item, venue)?.change_pct)">
+                {{ formatPct(market(item, venue)?.change_pct) }}
+              </td>
+              <td v-else class="num missing-quote">—</td>
+            </template>
+            <td class="num spread-cell" :class="changeClass(item.spread_pct)">{{ formatPct(item.spread_pct) }}</td>
             <td class="range-cell">
               <div class="range-track" aria-hidden="true"><span :style="{ width: `${rangePosition(item)}%` }" /></div>
-              <small>{{ rangePosition(item).toFixed(0) }}% 高位</small>
             </td>
-            <td class="spread-cell"><strong>{{ formatPct(item.spread_pct) }}</strong><small>{{ item.best_venue_id ? `${venueLabels[item.best_venue_id]} 最低` : '单一市场' }}</small></td>
-            <td class="volume-cell"><strong>{{ formatCompact(item.quote_volume_24h) }}</strong><small>{{ item.quote_asset }}</small></td>
+            <td class="num volume-cell">{{ formatCompact(item.quote_volume_24h) }}</td>
           </tr>
         </tbody>
       </table>
@@ -196,7 +194,7 @@ onUnmounted(() => {
     <div v-else class="ticker-empty"><WifiOff :size="21" /><p>当前没有可用的公开 ticker</p><small>请检查网络设置里的交易所 REST 地址和 HTTP 代理。</small></div>
 
     <footer class="ticker-footer">
-      <span>价格和涨跌为公开 24 小时 ticker；绿色标记是当前返回价格最低的市场，不是可执行套利信号。</span>
+      <span>价格和涨跌为公开 24 小时 ticker；红色涨、绿色跌；下划线标记是当前返回价格最低的市场，不是可执行套利信号。</span>
       <div class="ticker-pagination">
         <button class="icon-button" type="button" title="上一页" aria-label="上一页" :disabled="offset === 0 || loading" @click="goPage(-1)"><ArrowLeft :size="15" /></button>
         <span>{{ pageLabel }}</span>
@@ -208,7 +206,31 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.ticker-board{display:grid;gap:17px}.ticker-heading{align-items:start;margin-bottom:0}.ticker-subtitle{margin:8px 0 0;color:var(--dim);font-size:11px}.ticker-heading-meta{display:flex;align-items:center;gap:12px;color:var(--dim);font:10px Consolas,monospace}.ticker-toolbar{display:flex;align-items:end;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line)}.ticker-toolbar label{display:grid;gap:7px;min-width:130px;color:var(--muted);font-size:10px}.ticker-toolbar select,.ticker-toolbar input{min-height:37px;border:1px solid var(--line-bright);border-radius:5px;padding:8px 10px;color:var(--ink);background:#13191b;outline:none;font-size:11px}.ticker-toolbar select:focus,.ticker-toolbar input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(108,229,208,.1)}.ticker-search{flex:1 1 240px}.ticker-search div{display:flex;align-items:center;gap:8px;min-height:37px;border:1px solid var(--line-bright);border-radius:5px;padding:0 10px;color:var(--dim);background:#13191b}.ticker-search input{width:100%;min-height:35px;border:0;padding:0;background:transparent;box-shadow:none!important}.ticker-search-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:37px;border:1px solid var(--line-bright);border-radius:5px;padding:8px 13px;color:var(--muted);background:transparent;font-size:11px}.ticker-search-button:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan)}.ticker-status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--dim);font-size:10px}.ticker-live-dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}.ticker-live-dot.active{background:var(--cyan);box-shadow:0 0 0 4px rgba(108,229,208,.1)}.ticker-status-note{margin-left:auto}.ticker-table-wrap{overflow-x:auto;border:1px solid var(--line)}.ticker-table{width:100%;min-width:1050px;border-collapse:collapse;font-variant-numeric:tabular-nums}.ticker-table th,.ticker-table td{padding:11px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:10px;text-align:right;white-space:nowrap}.ticker-table th{color:var(--dim);background:var(--panel-soft);font-size:9px;font-weight:650;letter-spacing:.08em}.ticker-table th:first-child,.ticker-table td:first-child{text-align:left}.ticker-table tr:last-child td{border-bottom:0}.ticker-symbol{display:grid;gap:4px;min-width:100px}.ticker-symbol strong{color:var(--ink);font-size:12px;font-weight:650}.ticker-symbol small,.venue-quote small,.trend-cell small,.range-cell small,.spread-cell small,.volume-cell small{color:var(--dim);font-size:9px}.venue-quote{display:grid;gap:4px;min-width:124px}.venue-quote strong{color:var(--ink);font:600 11px Consolas,monospace}.venue-quote.best{background:rgba(108,229,208,.05)}.venue-quote .positive,.trend-cell.up,.trend-pill.up{color:var(--cyan)}.venue-quote .negative,.trend-cell.down,.trend-pill.down{color:var(--red)}.missing-quote{color:var(--dim)}.trend-cell,.spread-cell,.volume-cell{display:grid;gap:4px}.trend-pill{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px;font-size:10px}.trend-pill.flat{color:var(--amber)}.range-cell{min-width:110px}.range-track{width:90px;height:4px;margin-left:auto;border-radius:99px;background:#293333;overflow:hidden}.range-track span{display:block;height:100%;background:var(--cyan)}.spread-cell strong{color:var(--amber);font:600 11px Consolas,monospace}.volume-cell strong{color:var(--ink);font:600 11px Consolas,monospace}.ticker-empty{display:grid;justify-items:center;gap:9px;min-height:150px;place-content:center;border:1px dashed var(--line-bright);color:var(--dim);text-align:center}.ticker-empty p{margin:0;color:var(--muted);font-size:12px}.ticker-empty small{font-size:10px}.ticker-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;color:var(--dim);font-size:10px;line-height:1.5}.ticker-pagination{display:flex;align-items:center;gap:7px;white-space:nowrap}.ticker-pagination .icon-button{width:28px;height:28px;border-color:var(--line)}
+.ticker-board{display:grid;gap:17px}.ticker-heading{align-items:start;margin-bottom:0}.ticker-subtitle{margin:8px 0 0;color:var(--dim);font-size:11px}.ticker-heading-meta{display:flex;align-items:center;gap:12px;color:var(--dim);font:10px Consolas,monospace}.ticker-toolbar{display:flex;align-items:end;gap:12px;padding-bottom:16px;border-bottom:1px solid var(--line)}.ticker-toolbar label{display:grid;gap:7px;min-width:130px;color:var(--muted);font-size:10px}.ticker-toolbar select,.ticker-toolbar input{min-height:37px;border:1px solid var(--line-bright);border-radius:5px;padding:8px 10px;color:var(--ink);background: var(--input-bg);outline:none;font-size:11px}.ticker-toolbar select:focus,.ticker-toolbar input:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(108,229,208,.1)}.ticker-search{flex:1 1 240px}.ticker-search div{display:flex;align-items:center;gap:8px;min-height:37px;border:1px solid var(--line-bright);border-radius:5px;padding:0 10px;color:var(--dim);background: var(--input-bg)}.ticker-search input{width:100%;min-height:35px;border:0;padding:0;background:transparent;box-shadow:none!important}.ticker-search-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:37px;border:1px solid var(--line-bright);border-radius:5px;padding:8px 13px;color:var(--muted);background:transparent;font-size:11px}.ticker-search-button:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan)}.ticker-status-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:var(--dim);font-size:10px}.ticker-live-dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}.ticker-live-dot.active{background:var(--cyan);box-shadow:0 0 0 4px rgba(108,229,208,.1)}.ticker-status-note{margin-left:auto}.ticker-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:6px}
+.ticker-table{width:100%;min-width:960px;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.ticker-table th,.ticker-table td{padding:0 10px;color:var(--muted);font-size:11px;white-space:nowrap}
+.ticker-table thead th{color:var(--dim);background:var(--panel-soft);font-size:10px;font-weight:600;letter-spacing:.04em;border-bottom:1px solid var(--line)}
+.venue-group-row th{padding-top:9px;padding-bottom:2px;text-align:center;border-bottom:0!important}
+.venue-group-row th[rowspan]{vertical-align:middle}
+.venue-sub-row th{padding-top:2px;padding-bottom:9px}
+.ticker-table th.num,.ticker-table td.num{text-align:right;font-family:Consolas,"Noto Sans SC",monospace}
+.ticker-table thead th:first-child,.ticker-table tbody td:first-child{text-align:left}
+.quote-row{height:38px;border-bottom:1px solid var(--line);cursor:pointer}
+.quote-row:last-child{border-bottom:0}
+.quote-row:hover{background:rgba(108,229,208,.04)}
+.quote-row td{border-bottom:0}
+.ticker-symbol strong{display:block;color:var(--ink);font-size:12px;font-weight:650}
+.ticker-symbol small{color:var(--dim);font-size:9px}
+td.price{color:var(--ink);font-weight:600}
+td.price.best{text-decoration:underline;text-decoration-color:var(--amber);text-underline-offset:3px}
+.ticker-table td.up{color:var(--up)}
+.ticker-table td.down{color:var(--down)}
+.missing-quote{color:var(--dim)}
+.spread-cell{font-weight:600}
+.range-cell{min-width:80px}
+.range-track{width:72px;height:4px;margin-left:auto;border-radius:99px;background:#293333;overflow:hidden}
+.range-track span{display:block;height:100%;background:var(--cyan)}
+.volume-cell{color:var(--muted)}.ticker-empty{display:grid;justify-items:center;gap:9px;min-height:150px;place-content:center;border:1px dashed var(--line-bright);color:var(--dim);text-align:center}.ticker-empty p{margin:0;color:var(--muted);font-size:12px}.ticker-empty small{font-size:10px}.ticker-footer{display:flex;align-items:center;justify-content:space-between;gap:14px;color:var(--dim);font-size:10px;line-height:1.5}.ticker-pagination{display:flex;align-items:center;gap:7px;white-space:nowrap}.ticker-pagination .icon-button{width:28px;height:28px;border-color:var(--line)}
 .ticker-symbol-trigger{display:grid;justify-items:start;gap:4px;min-width:108px;min-height:54px;border:1px solid transparent;border-radius:4px;padding:3px 6px;color:inherit;background:transparent;text-align:left}.ticker-symbol-trigger:hover,.ticker-symbol-trigger:focus-visible{border-color:var(--line-bright);outline:none;background:#182120}.ticker-symbol-trigger:focus-visible{box-shadow:0 0 0 2px var(--cyan)}.ticker-symbol-trigger strong{color:var(--ink);font-size:12px;font-weight:650}.ticker-symbol-trigger small{color:var(--dim);font-size:9px}.ticker-detail-action{display:inline-flex;align-items:center;gap:4px;min-height:24px;color:var(--cyan);font-size:9px}
 @media(max-width:800px){.ticker-toolbar{align-items:stretch;flex-wrap:wrap}.ticker-toolbar label{flex:1 1 135px}.ticker-search{flex-basis:100%!important}.ticker-search-button{flex:1 1 100%}.ticker-status-note{width:100%;margin-left:17px}.ticker-footer{align-items:start;flex-direction:column}.ticker-pagination{width:100%;justify-content:space-between}}
 </style>

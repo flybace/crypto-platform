@@ -116,7 +116,7 @@ onMounted(load);
 .inline-notice { display: flex; align-items: center; gap: 7px; border-left: 2px solid var(--cyan); padding: 8px 12px; color: var(--cyan); background: rgba(108, 229, 208, .07); font-size: 12px; }
 .news-toolbar { display: flex; align-items: end; gap: 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 13px 0; }
 .news-toolbar label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; }
-.news-toolbar select { min-width: 120px; border: 1px solid var(--line-bright); border-radius: 4px; padding: 8px; color: var(--ink); background: #13191b; }
+.news-toolbar select { min-width: 120px; border: 1px solid var(--line-bright); border-radius: 4px; padding: 8px; color: var(--ink); background: var(--input-bg); }
 .news-toolbar-state { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--dim); font-size: 10px; }
 .news-toolbar-state svg { color: var(--amber); }
 .news-metrics { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -131,7 +131,7 @@ onMounted(load);
 .news-form { display: grid; gap: 12px; }
 .news-form label { display: grid; gap: 6px; min-width: 0; }
 .news-form label > span { color: var(--muted); font-size: 10px; }
-.news-form input, .news-form select, .news-form textarea { width: 100%; min-width: 0; border: 1px solid var(--line-bright); border-radius: 4px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; font-size: 11px; resize: vertical; }
+.news-form input, .news-form select, .news-form textarea { width: 100%; min-width: 0; border: 1px solid var(--line-bright); border-radius: 4px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; font-size: 11px; resize: vertical; }
 .news-form input, .news-form select { min-height: 36px; }
 .news-form input:focus, .news-form select:focus, .news-form textarea:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
