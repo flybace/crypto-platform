@@ -3179,3 +3179,23 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 前端构建成功。
 
 当前边界：模拟盘为历史回放模式，非实时跟单；策略在模拟盘的表现仍不保证实盘。
+
+### 31.38 2026-10-03 模拟盘自动化跟盯（源码切片）
+
+用户确认：在调参→模拟盘闭环之后，做"模拟盘自动化跟盯"——让模拟盘按周期自动用最新历史重跑策略、跟踪绩效、超阈值告警。
+
+本轮新增：
+- `backend/app/services/paper_follow.py`：`PaperFollowService`（跟盯配置 + 快照时间线，上限 60 条，mtime 跨进程重载）与 `execute_paper_follow` 编排（策略回放 + buy_and_hold 基准回放，同一数据集可比）。
+- 任务种类 `paper_follow`：`task_dispatcher.py` 的 `TASK_KINDS`/`TASK_PREFIXES` 新增；`task_worker.py` 新增 `_run_paper_follow`，回放只记录、不下单。
+- `task_scheduler.py`：历史同步 tick 为 up_to_date 且自动回放与跟盯均启用时，按 `interval_seconds` 投递 `paper_follow` 任务（防重复投递）。
+- API：`GET /paper/follow`（配置+快照+最新）、`PUT /paper/follow`（开关/周期/告警阈值）、`POST /paper/follow/run`（手动触发，支持排队）。
+- 前端 `PaperTradingCenter.vue`：新增"自动跟盯"面板——周期（每小时~每周）、收益/回撤/跑输市场三档告警阈值、最新快照卡片（策略收益 vs 市场收益 vs 超额 vs 回撤 vs 告警）、快照时间线表格。
+- 告警码：`return_below_threshold`（收益跌破阈值）、`drawdown_breach`（回撤超限）、`underperforms_market`（跑输市场）。
+
+验证：
+- 单元测试 15 项通过（配置校验、调度门禁、告警判定、快照上限、跨进程落盘、编排逻辑）。
+- 全量回归：unit + integration 299 passed。
+- 真实链路：Binance BTC/USDT 1h（168 根）`macd_reversal(8,26,7)` 跟盯一次，worker 异步完成，快照：策略 -3.57% / 市场 -0.06% / 超额 -3.51% / 回撤 4.59%，正确触发"收益跌破阈值"告警。
+- 前端构建成功，Playwright 截图验证面板渲染（`crypto-shots/28-自动跟盯面板.png`）。
+
+当前边界：跟盯是"周期性历史回放 + 绩效记录"，不是实时逐笔跟单；调度器默认跟盯关闭，需在模拟盘页手动启用；快照不保证未来表现，不得直接用于真钱决策。

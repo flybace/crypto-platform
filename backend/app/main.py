@@ -65,6 +65,7 @@ from .services.tune_history import TuneHistoryService  # noqa: E402
 from .services.domain_state import build_domain_state, build_runtime_state  # noqa: E402
 from .services.paper_trading import PaperTradingService  # noqa: E402
 from .services.paper_automation import PaperAutomationService  # noqa: E402
+from .services.paper_follow import PaperFollowService  # noqa: E402
 from .services.risk_policy import RiskPolicyService  # noqa: E402
 from .services.research_runs import ResearchRunService  # noqa: E402
 from .services.strategy_registry import StrategyRegistry  # noqa: E402
@@ -380,6 +381,9 @@ def create_app(
         paper_trading,
         strategy_registry,
         state_store=domain_state("paper-automation.json"),
+    )
+    app.state.paper_follow = PaperFollowService(
+        state_path=runtime_state_root / "paper-follow.json",
     )
     app.state.risk_policy = RiskPolicyService(state_store=domain_state("risk-policy.json"))
     app.state.domain_state = task_store

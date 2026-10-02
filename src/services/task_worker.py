@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import socket
 import threading
+import uuid
 from typing import Any
 
 from application.candle_backtest import CandleBacktestConfig
@@ -22,6 +23,7 @@ from backend.app.services.history_jobs import HistoryJobManager
 from backend.app.services.history_metadata import HistoryMetadataRepository
 from backend.app.services.history_service import build_history_service
 from backend.app.services.paper_automation import PaperAutomationService
+from backend.app.services.paper_follow import PaperFollowService, execute_paper_follow
 from backend.app.services.paper_trading import PaperTradingService
 from backend.app.services.parameter_tuning import ParameterTuner
 from backend.app.services.tune_history import TuneHistoryService
@@ -142,6 +144,9 @@ class TaskWorker:
             self.paper_trading,
             self.strategy_registry,
             state_store=domain_state("paper-automation.json"),
+        )
+        self.paper_follow = PaperFollowService(
+            state_path=runtime_root / "paper-follow.json",
         )
         self.strategy_matrices = StrategyMatrixService(
             self.history_service.storage,
@@ -727,6 +732,8 @@ class TaskWorker:
                 config=config,
                 record_task=False,
             )
+        if kind == "paper_follow":
+            return self._run_paper_follow(payload)
         if kind == "strategy_matrix":
             return self.strategy_matrices.run(
                 self._text(payload, "matrix_id"),
@@ -736,6 +743,23 @@ class TaskWorker:
         if kind == "parameter_tune":
             return self._run_parameter_tune(payload)
         raise ValueError(f"unsupported task kind: {kind}")
+
+    def _run_paper_follow(self, payload: dict[str, Any]) -> dict[str, object]:
+        run_id = self._text(payload, "run_id") or f"paper-follow-{uuid.uuid4().hex}"
+        snapshot = execute_paper_follow(
+            paper_automation=self.paper_automation,
+            paper_trading=self.paper_trading,
+            strategy_registry=self.strategy_registry,
+            follow_service=self.paper_follow,
+            run_id=run_id,
+        )
+        return {
+            "run_id": run_id,
+            "snapshot": snapshot,
+            "strategy_return_pct": snapshot.get("strategy_return_pct"),
+            "market_return_pct": snapshot.get("market_return_pct"),
+            "alerts": snapshot.get("alerts", []),
+        }
 
     def _run_research(self, payload: dict[str, Any]) -> dict[str, object]:
         mode = self._text(payload, "mode")
