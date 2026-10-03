@@ -263,3 +263,122 @@ def test_update_ignores_readonly_fields():
     service.update({"enabled": True, "trade_count": 99, "last_candle_time": "x"})
     assert service.get()["trade_count"] == 0
     assert service.get()["last_candle_time"] is None
+
+
+class TestCheckRisk:
+    """风控三件套：仓位上限、止损、单日最大亏损。"""
+
+    def _base_kwargs(self, **overrides):
+        kwargs = dict(
+            signal=None,
+            base_balance=Decimal("0"),
+            quote_balance=Decimal("10000"),
+            price=Decimal("50000"),
+            entry_price=None,
+            day_start_equity=Decimal("10000"),
+            max_position_ratio=Decimal("1"),
+            stop_loss_pct=Decimal("0"),
+            daily_max_loss_pct=Decimal("0"),
+            risk_halt_until=None,
+            now=datetime.now(UTC),
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_allow_when_no_risk_config(self):
+        from backend.app.services.paper_live import check_risk
+        result = check_risk(**self._base_kwargs())
+        assert result["action"] == "allow"
+
+    def test_stop_loss_triggers_force_sell(self):
+        from backend.app.services.paper_live import check_risk
+        # 持仓 0.2 BTC @50000，现价 47000 → -6%，止损线 5%
+        result = check_risk(**self._base_kwargs(
+            base_balance=Decimal("0.2"),
+            quote_balance=Decimal("0"),
+            price=Decimal("47000"),
+            entry_price=Decimal("50000"),
+            stop_loss_pct=Decimal("0.05"),
+        ))
+        assert result["action"] == "force_sell"
+        assert result["reason"] == "stop_loss"
+
+    def test_stop_loss_not_triggered_above_line(self):
+        from backend.app.services.paper_live import check_risk
+        # -4%，未到 5% 线
+        result = check_risk(**self._base_kwargs(
+            base_balance=Decimal("0.2"),
+            price=Decimal("48000"),
+            entry_price=Decimal("50000"),
+            stop_loss_pct=Decimal("0.05"),
+        ))
+        assert result["action"] == "allow"
+
+    def test_daily_max_loss_halts(self):
+        from backend.app.services.paper_live import check_risk
+        # 日初 10000，现权益 8900 → -11%，超 10% 线
+        result = check_risk(**self._base_kwargs(
+            base_balance=Decimal("0.2"),
+            quote_balance=Decimal("0"),
+            price=Decimal("44500"),
+            day_start_equity=Decimal("10000"),
+            daily_max_loss_pct=Decimal("0.10"),
+        ))
+        assert result["action"] == "halt"
+        assert result["reason"] == "daily_max_loss"
+        assert "halt_until" in result
+
+    def test_position_limit_caps_buy(self):
+        from backend.app.services.paper_live import check_risk
+        # 权益 10000+7500=17500，上限 50%=8750，已持仓 0.15 BTC @50000=7500，只能再买 1250
+        result = check_risk(**self._base_kwargs(
+            signal="BUY",
+            base_balance=Decimal("0.15"),
+            quote_balance=Decimal("10000"),
+            price=Decimal("50000"),
+            max_position_ratio=Decimal("0.5"),
+        ))
+        assert result["action"] == "cap_buy"
+        assert Decimal(result["max_notional"]) == pytest.approx(Decimal("1250"))
+
+    def test_position_limit_halt_when_full(self):
+        from backend.app.services.paper_live import check_risk
+        # 已持仓 0.2 BTC @50000=10000，权益 20000，上限 50%=10000 → 已满
+        result = check_risk(**self._base_kwargs(
+            signal="BUY",
+            base_balance=Decimal("0.2"),
+            quote_balance=Decimal("10000"),
+            price=Decimal("50000"),
+            max_position_ratio=Decimal("0.5"),
+        ))
+        assert result["action"] == "halt"
+        assert result["reason"] == "position_limit_reached"
+
+    def test_position_limit_partial_allow(self):
+        from backend.app.services.paper_live import check_risk
+        # 权益 10000，上限 50%，空仓 → 最多买 5000
+        result = check_risk(**self._base_kwargs(
+            signal="BUY",
+            max_position_ratio=Decimal("0.5"),
+        ))
+        assert result["action"] == "cap_buy"
+        assert Decimal(result["max_notional"]) == Decimal("5000")
+
+    def test_risk_halt_active(self):
+        from backend.app.services.paper_live import check_risk
+        future = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        result = check_risk(**self._base_kwargs(risk_halt_until=future))
+        assert result["action"] == "halt"
+        assert result["reason"] == "risk_halt_active"
+
+    def test_decide_order_respects_cap(self):
+        decision = decide_order(
+            signal="BUY",
+            base_balance=Decimal("0"),
+            quote_balance=Decimal("10000"),
+            price=Decimal("50000"),
+            allocation_ratio=Decimal("1"),
+            max_buy_notional=Decimal("5000"),
+        )
+        assert decision is not None
+        assert decision["quantity"] == pytest.approx(Decimal("0.1"))

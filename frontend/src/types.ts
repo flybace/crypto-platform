@@ -776,11 +776,16 @@ export type PaperLiveConfig = {
   strategy_id: string;
   strategy_parameters: Record<string, string | number | null>;
   allocation_ratio: string;
+  max_position_ratio: string;
+  stop_loss_pct: string;
+  daily_max_loss_pct: string;
   last_candle_time: string | null;
   last_signal: string | null;
   last_tick_at: string | null;
   last_order_id: string | null;
   trade_count: number;
+  entry_price: string | null;
+  last_risk_event: string | null;
   updated_at: string | null;
   recent_trades: PaperLiveTrade[];
 };

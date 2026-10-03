@@ -120,8 +120,11 @@ class PaperLiveRequest(BaseModel):
     strategy_id: str = Field(default="macd_reversal", min_length=1, max_length=64)
     strategy_parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
     allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
+    max_position_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
+    stop_loss_pct: Decimal = Field(default=Decimal("0"), ge=0, lt=1)
+    daily_max_loss_pct: Decimal = Field(default=Decimal("0"), ge=0, lt=1)
 
-    @field_validator("allocation_ratio", mode="before")
+    @field_validator("allocation_ratio", "max_position_ratio", "stop_loss_pct", "daily_max_loss_pct", mode="before")
     @classmethod
     def finite_decimal(cls, value):
         return _decimal(value)
