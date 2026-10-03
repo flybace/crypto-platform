@@ -48,6 +48,7 @@ from .api.runtime import router as runtime_router  # noqa: E402
 from .api.strategy_matrices import router as strategy_matrices_router  # noqa: E402
 from .api.strategy_packages import router as strategy_packages_router  # noqa: E402
 from .api.account import router as account_router  # noqa: E402
+from .api.strategy_funnel import router as strategy_funnel_router  # noqa: E402
 from .auth.service import AuthService  # noqa: E402
 from .services.advice import AdviceService  # noqa: E402
 from .services.assistant import AssistantService  # noqa: E402
@@ -432,6 +433,12 @@ def create_app(
         except Exception:
             pass
     app.state.paper_live_manager = paper_live_manager
+    # 策略准入漏斗：评级 + 阶段验证，模拟盘需要 A 级准入
+    from .services.strategy_funnel import StrategyFunnelService
+
+    app.state.strategy_funnel = StrategyFunnelService(
+        state_store=domain_state("strategy-funnel.json"),
+    )
     # 兼容旧 API：app.state.paper_live 指向 manager（API 已更新为多实例）
     paper_live_logger = logging.getLogger("crypto.paper_live")
 
@@ -491,6 +498,7 @@ def create_app(
     app.include_router(pools_router)
     app.include_router(screening_router)
     app.include_router(paper_router)
+    app.include_router(strategy_funnel_router)
     app.include_router(risk_router)
     app.include_router(research_router)
     app.include_router(tasks_router)

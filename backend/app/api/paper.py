@@ -244,6 +244,18 @@ def create_live_instance(
     try:
         # model_dump 会把 Decimal 转成字符串（mode="json"）
         data = payload.model_dump(mode="json")
+        # 策略准入漏斗：模拟盘需要 A 级及以上评级
+        funnel = getattr(request.app.state, "strategy_funnel", None)
+        if funnel is not None:
+            eligible, reason = funnel.check_paper_eligible(
+                data.get("strategy_id", ""), data.get("strategy_parameters", {})
+            )
+            if not eligible:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"策略未通过准入漏斗: {reason}。"
+                    "请先在回测页提交回测获取评级，按 评分→复测→跨池验证→准入 流程晋级。",
+                )
         # enabled 默认为 False，用户在前端点"启动策略"
         return manager.create_instance(data)
     except ValueError as error:
