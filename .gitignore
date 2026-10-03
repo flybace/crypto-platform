@@ -43,3 +43,4 @@ Thumbs.db
 /button.innerText.trim()).filter(Boolean).slice(-20)})
 /r.status)
 *.egg-info/
+.secrets/

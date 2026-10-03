@@ -3370,3 +3370,17 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 策略参数已恢复 fast=8/slow=26/signal=7。
 
 验证：全量 346 passed；真机 API 确认账户干净、参数恢复。
+
+### 31.47 2026-10-04 账户基座完善：密钥可填 + 热加载 + 安全默认
+
+背景：用户要求"把账号的基座功能做好，到时可以直接填真实的"。发现自动交易开关被之前测试残留打开（已关闭）。
+
+实现（分支 `codex/account-foundation`）：
+- 新增 `FileSecretProvider`（src/adapters/standalone/file_secret_provider.py）：密钥存 0600 文件（`data/history/.runtime/.secrets/exchange.json`，gitignore），环境变量优先，重启/重置不丢。
+- main.py 改用 FileSecretProvider；网关支持热加载（`app.state.rebuild_account_gateway`）。
+- 新 API：`GET /account/credentials`（状态，密钥只返回掩码前缀）、`POST /account/credentials`（保存→重建网关→ live 只读验证，失败自动回滚）、`DELETE /account/credentials`（删除密钥+销毁网关）。
+- 对账调度器支持 `gateway_provider` 动态取网关，密钥保存后对账自动生效，无需重启。
+- 前端账户页：未配置时显示密钥填写表单（Key/Secret+保存并验证）；已配置时显示掩码+删除按钮。
+- 安全：网关本身只读（仅 get_account/get_open_orders）；API 永不返回 secret；自动交易开关确认默认为 OFF。
+
+验证：351 passed（含 5 个 FileSecretProvider 新测试）；真机 API 确认 credentials 端点、trading=false、account 未配置只读。

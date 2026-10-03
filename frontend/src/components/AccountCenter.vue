@@ -18,6 +18,12 @@ const trading = ref<{ auto_trading_enabled: boolean } | null>(null);
 const recon = ref<any>(null);
 const pause = ref<any>(null);
 const clearing = ref(false);
+const credKey = ref('');
+const credSecret = ref('');
+const credPrefix = ref('');
+const credSaving = ref(false);
+const credError = ref('');
+const credOk = ref('');
 const toggling = ref(false);
 const loading = ref(false);
 const error = ref('');
@@ -30,6 +36,46 @@ async function loadStatus() {
 async function loadTrading() {
   const res = await api.get('/settings/trading');
   trading.value = res.data;
+}
+
+async function loadCredStatus() {
+  try {
+    const res = await api.get('/account/credentials');
+    credPrefix.value = res.data.key_prefix || '';
+  } catch { /* ignore */ }
+}
+
+async function saveCredentials() {
+  credSaving.value = true;
+  credError.value = '';
+  credOk.value = '';
+  try {
+    const res = await api.post('/account/credentials', { api_key: credKey.value, api_secret: credSecret.value });
+    credOk.value = `验证通过：读取到 ${res.data.balance_count} 种资产`;
+    credKey.value = '';
+    credSecret.value = '';
+    await loadStatus();
+    await loadCredStatus();
+    await loadBalances();
+  } catch (e: any) {
+    credError.value = e?.response?.data?.detail || '保存失败';
+  } finally {
+    credSaving.value = false;
+  }
+}
+
+async function deleteCredentials() {
+  if (!confirm('确定删除已保存的 API 密钥吗？')) return;
+  credSaving.value = true;
+  try {
+    await api.delete('/account/credentials');
+    await loadStatus();
+    credPrefix.value = '';
+  } catch (e: any) {
+    credError.value = e?.response?.data?.detail || '删除失败';
+  } finally {
+    credSaving.value = false;
+  }
 }
 
 async function loadBalances() {
@@ -56,6 +102,7 @@ async function refresh() {
   try {
     await loadStatus();
     await loadTrading();
+    await loadCredStatus();
     await loadRecon();
     if (status.value?.configured) {
       await loadBalances();
@@ -115,12 +162,26 @@ onMounted(refresh);
 
     <div v-if="error" class="alert error">{{ error }}</div>
 
-    <div v-if="status && !status.configured" class="alert warn">
-      <KeyRound :size="16" />
-      <div>
-        <strong>尚未配置 API Key</strong>
-        <p>在服务器环境变量中设置 <code>CRYPTO_BINANCE_API_KEY</code> / <code>CRYPTO_BINANCE_API_SECRET</code> 后重启后端即可接入只读账户。密钥不会经过前端。</p>
+    <div v-if="status && !status.configured" class="panel">
+      <h3><KeyRound :size="16" /> 接入 Binance 只读账户</h3>
+      <p class="muted">填写只读 API Key（请勿给交易/提现权限）。密钥保存在服务器 0600 文件中，不进 git；保存后自动验证连通性，无需重启。</p>
+      <div class="cred-form">
+        <label><span>API Key</span><input v-model="credKey" placeholder="Binance API Key" autocomplete="off" /></label>
+        <label><span>API Secret</span><input v-model="credSecret" type="password" placeholder="Binance API Secret" autocomplete="off" /></label>
+        <div class="cred-actions">
+          <button class="primary-btn" type="button" :disabled="credSaving || !credKey || !credSecret" @click="saveCredentials">
+            {{ credSaving ? '验证中…' : '保存并验证' }}
+          </button>
+        </div>
+        <p v-if="credError" class="error">{{ credError }}</p>
+        <p v-if="credOk" class="ok">{{ credOk }}</p>
       </div>
+    </div>
+
+    <div v-if="status?.configured" class="panel">
+      <h3><KeyRound :size="16" /> API 密钥</h3>
+      <p class="muted">已配置只读密钥 <code>{{ credPrefix || '****' }}</code>。如需更换，先删除再重新填写。</p>
+      <button class="danger-btn" type="button" :disabled="credSaving" @click="deleteCredentials">删除密钥</button>
     </div>
 
     <div v-if="status?.configured" class="cards">
@@ -256,4 +317,13 @@ onMounted(refresh);
 .switch.on .knob { left: 22px; background: var(--cyan); }
 .spinning { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.cred-form { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+.cred-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.cred-form input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--input-bg); color: inherit; }
+.cred-actions { display: flex; gap: 8px; }
+.primary-btn { padding: 8px 16px; border-radius: 6px; border: none; background: var(--accent, #1faa53); color: #fff; cursor: pointer; }
+.primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.danger-btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #f0433a; background: transparent; color: #f0433a; cursor: pointer; }
+.error { color: #f0433a; font-size: 13px; }
+.ok { color: #1faa53; font-size: 13px; }
 </style>

@@ -262,7 +262,7 @@ def create_app(
                 close_catalog = getattr(runtime_instrument_catalog, "close", None)
                 if callable(close_catalog):
                     close_catalog()
-                close_account = getattr(account_gateway, "close", None)
+                close_account = getattr(app.state.account_gateway, "close", None)
                 if callable(close_account):
                     close_account()
                 account_recon_scheduler.stop()
@@ -324,21 +324,29 @@ def create_app(
     # Read-only account foundation (M5): secret provider + Binance gateway.
     # Gateway is only created when credentials are configured; otherwise the
     # account API reports unconfigured instead of failing silently.
-    from adapters.standalone.env_secret_provider import EnvSecretProvider
+    # FileSecretProvider: keys can be entered via UI (stored 0600, survives
+    # resets), env vars still take precedence. Gateway is hot-swappable —
+    # saving credentials via API rebuilds it without a restart.
+    from adapters.standalone.file_secret_provider import FileSecretProvider
 
-    secret_provider = EnvSecretProvider()
+    secrets_path = Path(runtime_history_service.storage.root) / ".secrets" / "exchange.json"
+    secret_provider = FileSecretProvider(secrets_path)
     app.state.secret_provider = secret_provider
-    account_gateway = None
-    if secret_provider.is_configured("binance"):
+
+    def _build_account_gateway():
+        if not secret_provider.is_configured("binance"):
+            return None
         from adapters.venues.binance_account import BinanceReadOnlyAccountGateway
 
-        account_gateway = BinanceReadOnlyAccountGateway(
+        return BinanceReadOnlyAccountGateway(
             secret_provider.get_api_key("binance") or "",
             secret_provider.get_api_secret("binance") or "",
             base_url=runtime_settings.binance_public_rest_base_url,
             trust_env=runtime_settings.public_trust_env,
         )
-    app.state.account_gateway = account_gateway
+
+    app.state.account_gateway = _build_account_gateway()
+    app.state.rebuild_account_gateway = _build_account_gateway
     from .services.account_ledger_store import AccountLedgerStore
     from .services.account_reconciliation_scheduler import AccountReconciliationScheduler
 
@@ -346,8 +354,9 @@ def create_app(
     app.state.account_ledger_store = account_ledger_store
     account_recon_scheduler = AccountReconciliationScheduler(
         ledger_store=account_ledger_store,
-        gateway=account_gateway,
+        gateway=app.state.account_gateway,
         interval_seconds=300,
+        gateway_provider=lambda: app.state.account_gateway,
     )
     app.state.account_recon_scheduler = account_recon_scheduler
     from .services.trading_settings import TradingSettingsStore

@@ -36,11 +36,13 @@ class AccountReconciliationScheduler:
         interval_seconds: int = 300,
         account_id: str = "default",
         venue_id: str = "binance",
+        gateway_provider=None,
     ) -> None:
         if int(interval_seconds) <= 0:
             raise ValueError("interval_seconds must be positive")
         self._ledger = ledger_store
         self._gateway = gateway
+        self._gateway_provider = gateway_provider
         self._interval = int(interval_seconds)
         self._account_id = str(account_id)
         self._venue_id = str(venue_id)
@@ -48,6 +50,14 @@ class AccountReconciliationScheduler:
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
         self._last_run: dict[str, Any] = {"status": "not_started", "at": None, "error": None}
+
+    def _current_gateway(self):
+        if self._gateway_provider is not None:
+            try:
+                return self._gateway_provider()
+            except Exception:
+                return self._gateway
+        return self._gateway
 
     def start(self) -> None:
         with self._lock:
@@ -72,7 +82,7 @@ class AccountReconciliationScheduler:
                 "interval_seconds": self._interval,
                 "account_id": self._account_id,
                 "venue_id": self._venue_id,
-                "gateway_configured": self._gateway is not None,
+                "gateway_configured": self._current_gateway() is not None,
                 "last_run": dict(self._last_run),
                 "pause": self._ledger.get_pause(),
             }
@@ -86,13 +96,14 @@ class AccountReconciliationScheduler:
     def run_once(self) -> dict[str, Any]:
         """Execute a single reconciliation tick. Used by the loop and the API."""
         started = _utcnow()
-        if self._gateway is None:
+        gateway = self._current_gateway()
+        if gateway is None:
             result = {"status": "skipped", "reason": "account gateway not configured", "at": started.isoformat()}
             with self._lock:
                 self._last_run = result
             return result
         try:
-            snapshot = self._gateway.fetch_account(self._account_id)
+            snapshot = gateway.fetch_account(self._account_id)
             balances = [
                 {"asset": b.asset, "available": str(b.available), "total": str(b.total)}
                 for b in snapshot.balances
