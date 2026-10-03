@@ -181,10 +181,12 @@ class PaperLiveService:
         *,
         state_path: str | Path | None = None,
         state_store: StateStore | None = None,
+        regime_service=None,
     ) -> None:
         self._paper = paper
         self._strategies = strategies
         self._storage = storage
+        self._regime = regime_service
         self._state = state_store or (JsonStateStore(state_path) if state_path else None)
         self._config = deepcopy(DEFAULT_LIVE)
         self._trades: list[dict[str, Any]] = []
@@ -338,12 +340,34 @@ class PaperLiveService:
         # 仓位上限：截断买入金额
         max_buy_notional = Decimal(risk["max_notional"]) if risk_action == "cap_buy" else None
 
+        # 市场状态：只影响开仓（BUY），永不拦截平仓（SELL）
+        regime_info = None
+        effective_allocation = allocation
+        if signal == "BUY" and self._regime is not None:
+            regime_info = self._regime.evaluate()
+            if regime_info.blocks_new_positions:
+                with self._lock:
+                    self._config["last_risk_event"] = f"regime_blocked({regime_info.regime}) @ {now_iso} {regime_info.reason}"
+                    self._persist_locked()
+                result = {
+                    "status": "regime_blocked",
+                    "reason": regime_info.reason,
+                    "regime": regime_info.regime,
+                    "score": regime_info.score,
+                    "candle_time": candle_id,
+                    "close": str(candle.close),
+                    "signal": signal,
+                }
+                return result
+            if regime_info.factor < 1.0:
+                effective_allocation = allocation * Decimal(str(regime_info.factor))
+
         decision = decide_order(
             signal=signal,
             base_balance=base_balance,
             quote_balance=quote_balance,
             price=price,
-            allocation_ratio=allocation,
+            allocation_ratio=effective_allocation,
             max_buy_notional=max_buy_notional,
         )
         result: dict[str, Any] = {
@@ -354,6 +378,10 @@ class PaperLiveService:
             "base_balance": str(base_balance),
             "quote_balance": str(quote_balance),
         }
+        if regime_info is not None:
+            result["regime"] = regime_info.regime
+            result["regime_score"] = regime_info.score
+            result["regime_factor"] = regime_info.factor
         order_spec = decision
         if order_spec is not None and order_spec.get("skipped"):
             result["status"] = "skipped"
@@ -506,11 +534,13 @@ class PaperLiveManager:
         storage: HistoryStorage,
         state_store: StateStore | None = None,
         paper_factory=None,
+        regime_service=None,
     ) -> None:
         self._strategies = strategies
         self._storage = storage
         self._state = state_store
         self._paper_factory = paper_factory  # (instance_id) -> PaperTradingService
+        self._regime = regime_service
         self._instances: dict[str, PaperLiveService] = {}
         self._lock = RLock()
         self._load()
@@ -552,6 +582,7 @@ class PaperLiveManager:
             self._strategies,
             self._storage,
             state_store=self._instance_state_store(instance_id),
+            regime_service=self._regime,
         )
         if config:
             # 恢复已保存的配置（不触发校验失败就跳过）

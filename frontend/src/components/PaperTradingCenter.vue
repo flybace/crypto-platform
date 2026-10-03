@@ -63,6 +63,7 @@ const followSaving = ref(false);
 const followRunning = ref(false);
 const liveInstances = ref<PaperLiveInstance[]>([]);
 const editingInstanceId = ref<string | null>(null);
+const marketRegime = ref<{ regime: string; score: number; factor: number; blocks_new_positions: boolean; reason: string } | null>(null);
 const showLiveEditor = ref(false);
 const liveForm = ref<PaperLiveConfig>({
   enabled: false,
@@ -237,6 +238,10 @@ const loadData = async () => {
     followState.value = followResponse.data;
     followForm.value = { ...followForm.value, ...followResponse.data.config };
     const rawInstances = (liveResponse.data.instances || []) as PaperLiveInstance[];
+    try {
+      const { data: regimeData } = await api.get('/market-regime');
+      marketRegime.value = regimeData;
+    } catch { /* regime optional */ }
     liveInstances.value = rawInstances.map((inst) => ({
       ...inst,
       strategy_parameters: Object.fromEntries(
@@ -396,6 +401,7 @@ const cancelEdit = () => {
   showLiveEditor.value = false;
 };
 
+const regimeLabel = (r: string) => ({ strong: '偏强', neutral: '中性', weak: '偏弱', crisis: '危机' }[r] || r);
 const refreshInstances = async () => {
   const { data } = await api.get<{ instances: PaperLiveInstance[] }>('/paper/live');
   liveInstances.value = data.instances || [];
@@ -590,6 +596,14 @@ onMounted(loadData);
       <div class="section-heading">
         <div><p class="kicker">LIVE PAPER</p><h2 id="paper-live-title">实盘模拟</h2></div>
         <BriefcaseBusiness :size="18" class="section-icon" />
+      </div>
+      <div v-if="marketRegime" class="regime-banner" :class="'regime-' + marketRegime.regime">
+        <span class="regime-label">市场状态</span>
+        <strong>{{ regimeLabel(marketRegime.regime) }}</strong>
+        <span class="regime-score">{{ marketRegime.score.toFixed(1) }} 分</span>
+        <span class="regime-factor">仓位系数 ×{{ marketRegime.factor }}</span>
+        <span v-if="marketRegime.blocks_new_positions" class="regime-block">⛔ 禁止开仓</span>
+        <span class="regime-reason">{{ marketRegime.reason }}</span>
       </div>
       
       <!-- 实例列表 -->
@@ -814,4 +828,14 @@ onMounted(loadData);
 .snapshot-detail-row td { padding: 0 !important; border-bottom: 1px solid var(--line); }
 .snapshot-detail { display: flex; flex-wrap: wrap; gap: 8px 28px; padding: 12px 14px; background: var(--panel-soft); color: var(--muted); font-size: 11px; }
 .snapshot-detail strong { color: var(--dim); font-weight: 600; margin-right: 8px; font-size: 10px; }
+.regime-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; border: 1px solid var(--line); }
+.regime-label { color: var(--dim); font-size: 11px; }
+.regime-banner strong { font-size: 15px; }
+.regime-strong { border-color: #1faa53; background: rgba(31,170,83,.08); } .regime-strong strong { color: #1faa53; }
+.regime-neutral { border-color: var(--line-bright); } .regime-neutral strong { color: var(--cyan); }
+.regime-weak { border-color: #ff9800; background: rgba(255,152,0,.08); } .regime-weak strong { color: #ff9800; }
+.regime-crisis { border-color: #f0433a; background: rgba(240,67,58,.1); } .regime-crisis strong { color: #f0433a; }
+.regime-score, .regime-factor { color: var(--muted); font-size: 12px; }
+.regime-block { color: #f0433a; font-weight: 700; }
+.regime-reason { color: var(--dim); font-size: 11px; margin-left: auto; }
 </style>
