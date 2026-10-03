@@ -33,6 +33,96 @@ def account_status(request: Request, _: object = Depends(require_user)) -> dict[
     }
 
 
+from pydantic import BaseModel
+
+
+class AccountCredentialsRequest(BaseModel):
+    api_key: str
+    api_secret: str
+
+
+@router.get("/credentials")
+def credential_status(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    """Whether credentials are stored (key is masked, secret never returned)."""
+    secrets = getattr(request.app.state, "secret_provider", None)
+    configured = bool(secrets and secrets.is_configured("binance"))
+    return {
+        "configured": configured,
+        "venue_id": "binance",
+        "key_prefix": secrets.key_prefix("binance") if configured and secrets else None,
+    }
+
+
+@router.post("/credentials")
+def save_credentials(
+    payload: AccountCredentialsRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    """Save Binance read-only API credentials and hot-reload the gateway.
+
+    The key/secret are stored in a 0600 file (never in git). The gateway is
+    rebuilt immediately — no restart needed. A live read-only check
+    (get_account) verifies the credentials before accepting them.
+    """
+    secrets = getattr(request.app.state, "secret_provider", None)
+    if secrets is None:
+        raise HTTPException(status_code=500, detail="secret provider not available")
+    try:
+        secrets.save("binance", payload.api_key, payload.api_secret)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    # Hot-reload the gateway
+    rebuild = getattr(request.app.state, "rebuild_account_gateway", None)
+    if rebuild is not None:
+        old_gateway = getattr(request.app.state, "account_gateway", None)
+        try:
+            new_gateway = rebuild()
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=f"gateway rebuild failed: {error}") from error
+        request.app.state.account_gateway = new_gateway
+        if old_gateway is not None and old_gateway is not new_gateway:
+            try:
+                old_gateway.close()
+            except Exception:
+                pass
+    # Verify with a live read-only call
+    gateway = getattr(request.app.state, "account_gateway", None)
+    if gateway is None:
+        raise HTTPException(status_code=502, detail="gateway not available after save")
+    try:
+        snapshot = gateway.fetch_account("default")
+    except Exception as error:
+        # Roll back: remove the bad credentials
+        secrets.delete("binance")
+        request.app.state.account_gateway = None
+        raise HTTPException(status_code=502, detail=f"credential verification failed: {error}") from error
+    return {
+        "configured": True,
+        "venue_id": "binance",
+        "key_prefix": secrets.key_prefix("binance"),
+        "verified_at": snapshot.fetched_at.isoformat(),
+        "balance_count": len(snapshot.balances),
+    }
+
+
+@router.delete("/credentials")
+def delete_credentials(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    """Remove stored credentials and tear down the gateway."""
+    secrets = getattr(request.app.state, "secret_provider", None)
+    if secrets is None:
+        raise HTTPException(status_code=500, detail="secret provider not available")
+    secrets.delete("binance")
+    old_gateway = getattr(request.app.state, "account_gateway", None)
+    request.app.state.account_gateway = None
+    if old_gateway is not None:
+        try:
+            old_gateway.close()
+        except Exception:
+            pass
+    return {"configured": False, "venue_id": "binance"}
+
+
 @router.get("/balances")
 def account_balances(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
     """Current balances from the configured exchange (read-only)."""
