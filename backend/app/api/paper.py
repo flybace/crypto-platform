@@ -229,32 +229,98 @@ def run_follow(request: Request, _: object = Depends(require_user)) -> dict[str,
 
 @router.get("/live")
 def live(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
-    service = request.app.state.paper_live
-    return service.get()
+    """返回所有策略实例列表。"""
+    manager = request.app.state.paper_live_manager
+    return {"instances": manager.list_instances()}
 
 
+@router.post("/live/instances", status_code=status.HTTP_201_CREATED)
+def create_live_instance(
+    payload: PaperLiveRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    manager = request.app.state.paper_live_manager
+    try:
+        # model_dump 会把 Decimal 转成字符串（mode="json"）
+        data = payload.model_dump(mode="json")
+        # enabled 默认为 False，用户在前端点"启动策略"
+        return manager.create_instance(data)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.put("/live/instances/{instance_id}")
+def update_live_instance(
+    instance_id: str,
+    payload: PaperLiveRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    manager = request.app.state.paper_live_manager
+    try:
+        # 只更新提供的字段：用 exclude_unset 避免把未传字段重置为默认值
+        data = payload.model_dump(mode="json", exclude_unset=True)
+        return manager.update_instance(instance_id, data)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="instance not found")
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.delete("/live/instances/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_live_instance(
+    instance_id: str,
+    request: Request,
+    _: object = Depends(require_user),
+):
+    manager = request.app.state.paper_live_manager
+    try:
+        manager.delete_instance(instance_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="instance not found")
+
+
+@router.post("/live/instances/{instance_id}/run", status_code=status.HTTP_201_CREATED)
+def run_live_instance(
+    instance_id: str,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    manager = request.app.state.paper_live_manager
+    svc = manager.get_instance(instance_id)
+    if svc is None:
+        raise HTTPException(status_code=404, detail="instance not found")
+    if not svc.get().get("enabled"):
+        raise HTTPException(status_code=422, detail="paper live instance is disabled")
+    try:
+        return svc.tick()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+# 兼容旧单实例 API（已废弃，前端不再使用）
 @router.put("/live")
 def update_live(
     payload: PaperLiveRequest,
     request: Request,
     _: object = Depends(require_user),
 ) -> dict[str, object]:
-    service = request.app.state.paper_live
-    try:
-        return service.update(payload.model_dump(mode="json"))
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    manager = request.app.state.paper_live_manager
+    instances = manager.list_instances()
+    if not instances:
+        raise HTTPException(status_code=404, detail="no live instances")
+    # 默认操作第一个实例
+    return update_live_instance(instances[0]["instance_id"], payload, request, _)
 
 
 @router.post("/live/run", status_code=status.HTTP_201_CREATED)
 def run_live(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
-    service = request.app.state.paper_live
-    if not service.get().get("enabled"):
-        raise HTTPException(status_code=422, detail="paper live loop is disabled")
-    try:
-        return service.tick()
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    manager = request.app.state.paper_live_manager
+    instances = manager.list_instances()
+    if not instances:
+        raise HTTPException(status_code=404, detail="no live instances")
+    return run_live_instance(instances[0]["instance_id"], request, _)
 
 
 @router.get("/summary")

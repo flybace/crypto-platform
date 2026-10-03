@@ -790,6 +790,10 @@ export type PaperLiveConfig = {
   recent_trades: PaperLiveTrade[];
 };
 
+export type PaperLiveInstance = PaperLiveConfig & {
+  instance_id: string;
+};
+
 export type PaperFollowConfig = {
   enabled: boolean;
   interval_seconds: number;

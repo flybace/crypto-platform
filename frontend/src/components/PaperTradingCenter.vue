@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { AlertTriangle, BriefcaseBusiness, Check, CircleDollarSign, FlaskConical, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Square } from 'lucide-vue-next';
 import { api } from '../api';
-import type { HistoryCoverage, HistoryDataset, PaperAccountSummary, PaperAutomation, PaperFollowConfig, PaperFollowSnapshot, PaperFollowState, PaperLiveConfig, PaperOrder, PaperSummary, QueuedTaskResponse, StrategyDefinition } from '../types';
+import type { HistoryCoverage, HistoryDataset, PaperAccountSummary, PaperAutomation, PaperFollowConfig, PaperFollowSnapshot, PaperFollowState, PaperLiveConfig, PaperLiveInstance, PaperOrder, PaperSummary, QueuedTaskResponse, StrategyDefinition } from '../types';
 import { isQueuedTask, resolveTaskResponse, taskStatusLabel } from '../services/taskPolling';
 
 const summary = ref<PaperSummary | null>(null);
@@ -61,6 +61,9 @@ const followForm = ref<PaperFollowConfig>({
 const followState = ref<PaperFollowState | null>(null);
 const followSaving = ref(false);
 const followRunning = ref(false);
+const liveInstances = ref<PaperLiveInstance[]>([]);
+const editingInstanceId = ref<string | null>(null);
+const showLiveEditor = ref(false);
 const liveForm = ref<PaperLiveConfig>({
   enabled: false,
   venue_id: 'binance',
@@ -220,7 +223,7 @@ const loadData = async () => {
       api.get<{ items: StrategyDefinition[] }>('/strategies/catalog'),
       api.get<PaperAutomation>('/paper/automation'),
       api.get<PaperFollowState>('/paper/follow'),
-      api.get<PaperLiveConfig>('/paper/live'),
+      api.get<{ instances: PaperLiveInstance[] }>('/paper/live'),
     ]);
     summary.value = summaryResponse.data;
     orders.value = orderResponse.data.items;
@@ -233,10 +236,13 @@ const loadData = async () => {
     );
     followState.value = followResponse.data;
     followForm.value = { ...followForm.value, ...followResponse.data.config };
-    liveForm.value = { ...liveForm.value, ...liveResponse.data };
-    liveForm.value.strategy_parameters = Object.fromEntries(
-      Object.entries(liveForm.value.strategy_parameters || {}).map(([key, value]) => [key, String(value ?? '')]),
-    );
+    const rawInstances = (liveResponse.data.instances || []) as PaperLiveInstance[];
+    liveInstances.value = rawInstances.map((inst) => ({
+      ...inst,
+      strategy_parameters: Object.fromEntries(
+        Object.entries(inst.strategy_parameters || {}).map(([key, value]) => [key, String(value ?? '')]),
+      ),
+    }));
     const configuredDataset = automationDatasets.value.find((dataset) => (
       dataset.venue_id === automationForm.value.venue_id
       && dataset.interval === automationForm.value.interval
@@ -349,67 +355,128 @@ const runFollow = async () => {
   }
 };
 
+const blankLiveForm = (): PaperLiveConfig => ({
+  enabled: false,
+  venue_id: 'binance',
+  symbol: 'BTC/USDT',
+  interval: '1h',
+  strategy_id: 'macd_reversal',
+  strategy_parameters: { fast: 8, slow: 26, signal: 7 },
+  allocation_ratio: '1',
+  max_position_ratio: '1',
+  stop_loss_pct: '0',
+  daily_max_loss_pct: '0',
+  last_candle_time: null,
+  last_signal: null,
+  last_tick_at: null,
+  last_order_id: null,
+  trade_count: 0,
+  entry_price: null,
+  last_risk_event: null,
+  updated_at: null,
+  recent_trades: [],
+});
+
+const startNewInstance = () => {
+  editingInstanceId.value = null;
+  liveForm.value = blankLiveForm();
+  onLiveStrategyChange();
+  showLiveEditor.value = true;
+};
+
+const editInstance = (inst: PaperLiveInstance) => {
+  editingInstanceId.value = inst.instance_id;
+  const { instance_id: _drop, ...cfg } = inst;
+  liveForm.value = { ...cfg };
+  showLiveEditor.value = true;
+};
+
+const cancelEdit = () => {
+  editingInstanceId.value = null;
+  showLiveEditor.value = false;
+};
+
+const refreshInstances = async () => {
+  const { data } = await api.get<{ instances: PaperLiveInstance[] }>('/paper/live');
+  liveInstances.value = data.instances || [];
+};
+
 const saveLive = async () => {
   liveSaving.value = true;
   error.value = '';
   notice.value = '';
   try {
-    const { data } = await api.put<PaperLiveConfig>('/paper/live', liveForm.value);
-    liveForm.value = { ...liveForm.value, ...data };
-    notice.value = '实盘模拟配置已保存';
+    if (editingInstanceId.value) {
+      const { data } = await api.put<PaperLiveInstance>(`/paper/live/instances/${editingInstanceId.value}`, liveForm.value);
+      const idx = liveInstances.value.findIndex((i) => i.instance_id === editingInstanceId.value);
+      if (idx >= 0) liveInstances.value[idx] = data;
+      notice.value = '策略实例已更新';
+    } else {
+      const { data } = await api.post<PaperLiveInstance>('/paper/live/instances', liveForm.value);
+      liveInstances.value.push(data);
+      notice.value = '策略实例已创建';
+    }
+    editingInstanceId.value = null;
+    showLiveEditor.value = false;
   } catch (cause: any) {
-    error.value = cause.response?.data?.detail || '实盘模拟配置保存失败';
+    error.value = cause.response?.data?.detail || '策略实例保存失败';
   } finally {
     liveSaving.value = false;
   }
 };
 
-const startLiveStrategy = async () => {
+const setInstanceEnabled = async (inst: PaperLiveInstance, enabled: boolean) => {
   liveSaving.value = true;
   error.value = '';
   notice.value = '';
   try {
-    const { data } = await api.put<PaperLiveConfig>('/paper/live', { ...liveForm.value, enabled: true });
-    liveForm.value = { ...liveForm.value, ...data };
-    notice.value = '策略已启动：引擎每 60 秒检查一次，有信号自动下单（模拟）';
+    const { data } = await api.put<PaperLiveInstance>(
+      `/paper/live/instances/${inst.instance_id}`,
+      { enabled },
+    );
+    const idx = liveInstances.value.findIndex((i) => i.instance_id === inst.instance_id);
+    if (idx >= 0) liveInstances.value[idx] = data;
+    notice.value = enabled
+      ? '策略已启动：引擎每 60 秒检查一次，有信号自动下单（模拟）'
+      : '策略已停止：不再自动下单';
   } catch (cause: any) {
-    error.value = cause.response?.data?.detail || '策略启动失败';
+    error.value = cause.response?.data?.detail || (enabled ? '策略启动失败' : '策略停止失败');
   } finally {
     liveSaving.value = false;
   }
 };
 
-const stopLiveStrategy = async () => {
+const deleteInstance = async (inst: PaperLiveInstance) => {
+  if (!confirm(`确定删除策略实例 ${inst.venue_id} ${inst.symbol} ${inst.interval} 吗？`)) return;
   liveSaving.value = true;
   error.value = '';
-  notice.value = '';
   try {
-    const { data } = await api.put<PaperLiveConfig>('/paper/live', { ...liveForm.value, enabled: false });
-    liveForm.value = { ...liveForm.value, ...data };
-    notice.value = '策略已停止：不再自动下单';
+    await api.delete(`/paper/live/instances/${inst.instance_id}`);
+    liveInstances.value = liveInstances.value.filter((i) => i.instance_id !== inst.instance_id);
+    if (editingInstanceId.value === inst.instance_id) { editingInstanceId.value = null; showLiveEditor.value = false; }
+    notice.value = '策略实例已删除';
   } catch (cause: any) {
-    error.value = cause.response?.data?.detail || '策略停止失败';
+    error.value = cause.response?.data?.detail || '删除失败';
   } finally {
     liveSaving.value = false;
   }
 };
 
-const runLive = async () => {
+const runInstance = async (inst: PaperLiveInstance) => {
   liveRunning.value = true;
   error.value = '';
-  notice.value = '';
   liveResult.value = '';
   try {
-    const { data } = await api.post<{ status: string; signal?: string | null; trade?: { side: string; quantity: string } }>('/paper/live/run');
-    await loadData();
-    const statusText: Record<string, string> = { traded: '已下单', checked: '已检查(无信号)', no_new_candle: '无新 K 线', skipped: '已跳过' };
-    liveResult.value = `执行结果：${statusText[data.status] || data.status}${data.signal ? ' · 信号 ' + data.signal : ''}${data.trade ? ` · ${data.trade.side === 'BUY' ? '买入' : '卖出'} ${formatNumber(data.trade.quantity, 6)}` : ''}`;
+    const { data } = await api.post(`/paper/live/instances/${inst.instance_id}/run`);
+    liveResult.value = JSON.stringify(data);
+    await refreshInstances();
   } catch (cause: any) {
-    error.value = cause.response?.data?.detail || '实盘模拟执行失败';
+    error.value = cause.response?.data?.detail || '立即执行失败';
   } finally {
     liveRunning.value = false;
   }
 };
+
 
 const runStrategy = async () => {
   if (!selectedDataset.value) {
@@ -504,7 +571,65 @@ onMounted(loadData);
     <section class="paper-banner"><AlertTriangle :size="17" /><div><strong>模拟环境</strong><span>所有订单只写入内存模拟账户，服务端真实执行模式为 DISABLED。</span></div></section>
     
     
-    <section class="paper-panel live-panel" aria-labelledby="paper-live-title"><div class="section-heading"><div><p class="kicker">LIVE PAPER</p><h2 id="paper-live-title">实盘模拟</h2></div><BriefcaseBusiness :size="18" class="section-icon" /></div><div class="automation-form"><label><span>市场</span><select v-model="liveForm.venue_id"><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label><label><span>品种</span><input v-model="liveForm.symbol" placeholder="BTC/USDT" /></label><label><span>周期</span><select v-model="liveForm.interval"><option value="5m">5 分钟</option><option value="1h">1 小时</option><option value="1d">1 日</option></select></label><label><span>策略</span><select v-model="liveForm.strategy_id" @change="onLiveStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><div v-if="liveParameterFields.length" class="replay-params"><label v-for="field in liveParameterFields" :key="field.key"><span>{{ field.label }}</span><input v-model="liveForm.strategy_parameters[field.key]" type="number" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div><label><span>仓位比例</span><input v-model="liveForm.allocation_ratio" type="number" min="0.01" max="1" step="0.05" /></label><label><span>持仓上限</span><input v-model="liveForm.max_position_ratio" type="number" min="0.01" max="1" step="0.05" title="持仓市值占总权益的最大比例" /></label><label><span>止损 %</span><input v-model="liveForm.stop_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；如 0.05 表示浮亏 5% 强制平仓" /></label><label><span>单日最大亏损 %</span><input v-model="liveForm.daily_max_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；超限则停牌至次日 UTC 0 点" /></label><button class="secondary-button" type="button" :disabled="liveSaving" @click="saveLive"><Save v-if="!liveSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ liveSaving ? '保存中' : '保存配置' }}</span></button><button v-if="!liveForm.enabled" class="paper-submit" type="button" :disabled="liveSaving" @click="startLiveStrategy"><Play :size="15" /><span>启动策略</span></button><button v-else class="danger-button" type="button" :disabled="liveSaving" @click="stopLiveStrategy"><Square :size="15" /><span>停止策略</span></button><button class="secondary-button" type="button" :disabled="liveRunning || !liveForm.enabled" @click="runLive"><Play v-if="!liveRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ liveRunning ? '执行中' : '立即执行一次' }}</span></button></div><div v-if="liveResult" class="inline-notice" role="status"><Check :size="14" />{{ liveResult }}</div><div class="live-status" aria-label="实盘模拟状态"><article><span>状态</span><strong :class="liveForm.enabled ? 'positive' : ''">{{ liveForm.enabled ? '运行中' : '已停止' }}</strong></article><article><span>上次执行</span><strong class="follow-time">{{ liveForm.last_tick_at ? formatDate(liveForm.last_tick_at) : '—' }}</strong></article><article><span>上次信号</span><strong>{{ liveForm.last_signal || '—' }}</strong></article><article><span>累计下单</span><strong>{{ liveForm.trade_count }}</strong></article><article v-if="liveForm.last_risk_event"><span>风控事件</span><strong class="negative">{{ liveForm.last_risk_event }}</strong></article></div><div v-if="liveForm.recent_trades.length" class="order-table-wrap"><table class="order-table"><thead><tr><th>时间</th><th>信号</th><th>方向</th><th>数量</th><th>成交价</th><th>订单</th></tr></thead><tbody><tr v-for="trade in liveForm.recent_trades" :key="trade.order_id || trade.created_at"><td>{{ formatDate(trade.created_at) }}</td><td>{{ trade.signal || '—' }}</td><td :class="trade.side === 'SELL' ? 'negative' : 'positive'">{{ trade.side === 'SELL' ? '卖出' : '买入' }}</td><td>{{ formatNumber(trade.quantity, 6) }}</td><td>{{ trade.filled_price ? formatNumber(trade.filled_price, 2) : '—' }}</td><td class="mono">{{ (trade.order_id || '—').slice(0, 8) }}</td></tr></tbody></table></div><p class="paper-note"><ShieldCheck :size="13" /> 策略启动后独立运行：引擎每 60 秒检查最新已收盘 K 线，有信号自动下单（每根 K 线最多一笔）；只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p></section>
+    <section class="paper-panel live-panel" aria-labelledby="paper-live-title">
+      <div class="section-heading">
+        <div><p class="kicker">LIVE PAPER</p><h2 id="paper-live-title">实盘模拟</h2></div>
+        <BriefcaseBusiness :size="18" class="section-icon" />
+      </div>
+      
+      <!-- 实例列表 -->
+      <div v-if="liveInstances.length" class="order-table-wrap">
+        <table class="order-table">
+          <thead><tr><th>市场</th><th>品种</th><th>周期</th><th>策略</th><th>状态</th><th>上次执行</th><th>信号</th><th>下单</th><th>风控</th><th>操作</th></tr></thead>
+          <tbody>
+            <tr v-for="inst in liveInstances" :key="inst.instance_id">
+              <td>{{ inst.venue_id }}</td>
+              <td>{{ inst.symbol }}</td>
+              <td>{{ inst.interval }}</td>
+              <td>{{ inst.strategy_id }}</td>
+              <td><strong :class="inst.enabled ? 'positive' : ''">{{ inst.enabled ? '运行中' : '已停止' }}</strong></td>
+              <td class="follow-time">{{ inst.last_tick_at ? formatDate(inst.last_tick_at) : '—' }}</td>
+              <td>{{ inst.last_signal || '—' }}</td>
+              <td>{{ inst.trade_count }}</td>
+              <td v-if="inst.last_risk_event" class="negative">{{ inst.last_risk_event }}</td><td v-else>—</td>
+              <td>
+                <button v-if="!inst.enabled" class="secondary-button" type="button" :disabled="liveSaving" @click="setInstanceEnabled(inst, true)">启动</button>
+                <button v-else class="danger-button" type="button" :disabled="liveSaving" @click="setInstanceEnabled(inst, false)">停止</button>
+                <button class="secondary-button" type="button" :disabled="liveRunning || !inst.enabled" @click="runInstance(inst)">执行</button>
+                <button class="secondary-button" type="button" @click="editInstance(inst)">编辑</button>
+                <button class="danger-button" type="button" :disabled="liveSaving" @click="deleteInstance(inst)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="paper-note">暂无策略实例。点击下方"添加策略"创建第一个。</p>
+      
+      <div style="margin: 12px 0;">
+        <button class="paper-submit" type="button" @click="startNewInstance"><Play :size="15" /><span>添加策略</span></button>
+      </div>
+      
+      <!-- 编辑器 -->
+      <div v-if="showLiveEditor" class="automation-form">
+        <h3 style="margin: 0 0 8px;">{{ editingInstanceId ? '编辑策略' : '新策略' }}</h3>
+        <label><span>市场</span><select v-model="liveForm.venue_id"><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label>
+        <label><span>品种</span><input v-model="liveForm.symbol" placeholder="BTC/USDT" /></label>
+        <label><span>周期</span><select v-model="liveForm.interval"><option value="5m">5 分钟</option><option value="1h">1 小时</option><option value="1d">1 日</option></select></label>
+        <label><span>策略</span><select v-model="liveForm.strategy_id" @change="onLiveStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label>
+        <div v-if="liveParameterFields.length" class="replay-params">
+          <label v-for="field in liveParameterFields" :key="field.key"><span>{{ field.label }}</span><input v-model="liveForm.strategy_parameters[field.key]" type="number" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label>
+        </div>
+        <label><span>仓位比例</span><input v-model="liveForm.allocation_ratio" type="number" min="0.01" max="1" step="0.05" /></label>
+        <label><span>持仓上限</span><input v-model="liveForm.max_position_ratio" type="number" min="0.01" max="1" step="0.05" title="持仓市值占总权益的最大比例" /></label>
+        <label><span>止损 %</span><input v-model="liveForm.stop_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；如 0.05 表示浮亏 5% 强制平仓" /></label>
+        <label><span>单日最大亏损 %</span><input v-model="liveForm.daily_max_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；超限则停牌至次日 UTC 0 点" /></label>
+        <button class="secondary-button" type="button" :disabled="liveSaving" @click="saveLive"><Save v-if="!liveSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ liveSaving ? '保存中' : '保存' }}</span></button>
+        <button v-if="editingInstanceId" class="secondary-button" type="button" @click="cancelEdit">取消</button>
+      </div>
+      
+      <div v-if="liveResult" class="inline-notice" role="status"><Check :size="14" />{{ liveResult }}</div>
+      <p class="paper-note"><ShieldCheck :size="13" /> 每个策略独立运行、独立账户：引擎每 60 秒轮询所有已启动的策略，各自检查最新已收盘 K 线，有信号自动下单（每根 K 线最多一笔）；只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p>
+    </section>
     <section class="paper-metrics" aria-label="模拟盘摘要"><article><span>模拟净值</span><strong>{{ summary ? formatNumber(summary.equity_quote, 2) : '—' }}</strong><em>USDT</em></article><article><span>基础资产</span><strong>{{ positions.length }}</strong><em>有余额的币种</em></article><article><span>已提交订单</span><strong>{{ summary?.order_count ?? 0 }}</strong><em>模拟撮合记录</em></article><article><span>策略回放</span><strong>{{ summary?.strategy_run_count ?? strategyRuns.length }}</strong><em>历史样本运行</em></article><article><span>费率</span><strong>{{ summary?.fee_bps || '10' }}</strong><em>bps</em></article></section>
 
     
