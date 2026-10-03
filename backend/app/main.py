@@ -60,6 +60,8 @@ from .services.notifications import NotificationService  # noqa: E402
 from .services.opportunity_log import OpportunityLogService  # noqa: E402
 from .services.news import NewsService  # noqa: E402
 from .services.backtest_runs import BacktestRunManager  # noqa: E402
+from .services.strategy_presets import StrategyPresetService  # noqa: E402
+from .services.tune_history import TuneHistoryService  # noqa: E402
 from .services.domain_state import build_domain_state, build_runtime_state  # noqa: E402
 from .services.paper_trading import PaperTradingService  # noqa: E402
 from .services.paper_automation import PaperAutomationService  # noqa: E402
@@ -201,6 +203,12 @@ def create_app(
         state_store=domain_state("backtest-runs.json"),
         task_store=task_store,
     )
+    runtime_tune_history = TuneHistoryService(
+        state_path=runtime_state_root / "tune-history.json",
+    )
+    runtime_strategy_presets = StrategyPresetService(
+        state_path=runtime_state_root / "strategy-presets.json",
+    )
     strategy_registry = StrategyRegistry(state_store=domain_state("strategies.json"))
     strategy_packages = StrategyPackageService(state_store=domain_state("strategy-packages.json"))
     strategy_matrices = StrategyMatrixService(
@@ -338,6 +346,8 @@ def create_app(
         Path(runtime_settings.history_data_path).parent / "trading-settings.json"
     )
     app.state.backtest_runs = runtime_backtest_runs
+    app.state.tune_history = runtime_tune_history
+    app.state.strategy_presets = runtime_strategy_presets
     app.state.strategy_registry = strategy_registry
     app.state.strategy_packages = strategy_packages
     app.state.strategy_matrices = strategy_matrices

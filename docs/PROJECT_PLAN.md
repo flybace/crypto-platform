@@ -3144,3 +3144,24 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 实测 `volatility_breakout` 4 组合调参：最优 (window=10, atr_multiplier=1.5) +11.28%，与脚本版结果一致。
 
 当前边界：同步执行，大网格（>100 组合）需分批；未做异步任务队列版本。31.34 的脚本调参结论依然有效。
+
+### 31.36 2026-10-02 自动调参 v2：异步 + 训练/验证 + 过拟合门禁（源码切片）
+
+用户要求：继续完善策略功能（大头），策略要有回测和自动调参，"调到能赚钱为止"；还要接入新闻等消息面。
+
+本轮新增（源码 + 自动测试）：
+
+- `backend/app/services/parameter_tuning.py`：`ParameterTuner.tune()` 新增 `validation_ratio`（默认 0.3）和 `validation_top_n`（默认 10）参数。启用时按时间切分训练/验证窗口：全部组合跑训练窗口，Top-N 跑验证窗口，最终按稳健得分（验证指标 - 0.25×|回撤|）排序。过拟合门禁：仅当训练和验证双窗口都盈利才算通过。
+- `backend/app/services/backtest_runs.py`：新增 `dataset_time_range()`，供调参切分窗口用。
+- 异步化：`task_dispatcher.py` 新增 `parameter_tune` 任务类型；`src/services/task_worker.py` 新增 `_run_parameter_tune`；`POST /api/v1/backtests/tune` 在 Redis 队列启用时返回 202 排队，否则同步执行。
+- 持久化：新增 `backend/app/services/tune_history.py`（调参历史，JSON 落盘，跨进程 mtime 感知重载）和 `backend/app/services/strategy_presets.py`（策略参数预设）；API 新增 `GET/DELETE /api/v1/backtests/tunes`、`GET/POST/DELETE /api/v1/backtests/presets`。
+- 前端 `ParameterTuningPanel.vue`：绑定当前数据集（去掉硬编码 binance/BTC/1d）、支持异步任务轮询、验证集比例/Top-N 输入、训练 vs 验证双列结果表、过拟合徽章（双窗口盈利/疑似过拟合/未验证）、调参历史查看、一键"保存为参数预设"。
+- 前端 `BacktestCenter.vue`：策略参数区新增"加载预设"；回测结果区新增"消息面时间线"，展示回测区间内的相关新闻（情绪标签+高风险标记）。
+- `backend/app/services/news.py` + `backend/app/api/news.py`：新闻事件查询新增 `start_at`/`end_at` 时间过滤，供回测复盘用。
+- 9 个单测（3 新增）：验证切分过拟合标记、双窗口盈利通过、非法 validation_ratio 拒绝。
+
+验证：
+- 后端 335 passed（unit+integration，acceptance 除外）；前端构建成功。
+- 真实链路：`macd_reversal` 在 Binance BTC/USDT 1d 上 2 组合调参经 worker 异步完成，最优 (fast_period=8, slow_period=26)，训练 +1.27%、验证 +9.50%，过拟合门禁通过；结果落盘 tune-history.json 并可通过 API 查询。
+
+当前边界：新闻时间线仅用于复盘展示，回测引擎本身不做消息面过滤；"调到赚钱"指历史双窗口验证通过，不构成实盘盈利保证。

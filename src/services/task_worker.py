@@ -23,6 +23,8 @@ from backend.app.services.history_metadata import HistoryMetadataRepository
 from backend.app.services.history_service import build_history_service
 from backend.app.services.paper_automation import PaperAutomationService
 from backend.app.services.paper_trading import PaperTradingService
+from backend.app.services.parameter_tuning import ParameterTuner
+from backend.app.services.tune_history import TuneHistoryService
 from backend.app.services.public_network_settings import (
     PublicNetworkSettingsStore,
     endpoint_defaults_from_settings,
@@ -120,6 +122,9 @@ class TaskWorker:
             self.history_service.storage,
             state_store=domain_state("backtest-runs.json"),
             task_store=self.store,
+        )
+        self.tune_history = TuneHistoryService(
+            state_path=runtime_root / "tune-history.json",
         )
         self.research_runs = ResearchRunService(
             self.history_service.storage,
@@ -728,6 +733,8 @@ class TaskWorker:
                 run_id=self._text(payload, "run_id"),
                 record_task=False,
             )
+        if kind == "parameter_tune":
+            return self._run_parameter_tune(payload)
         raise ValueError(f"unsupported task kind: {kind}")
 
     def _run_research(self, payload: dict[str, Any]) -> dict[str, object]:
@@ -789,6 +796,38 @@ class TaskWorker:
                 record_task=False,
             )
         raise ValueError(f"unsupported research mode: {mode}")
+
+    def _run_parameter_tune(self, payload: dict[str, Any]) -> dict[str, object]:
+        """Execute a grid-search parameter tuning task in the worker."""
+        strategy_id = self._text(payload, "strategy_id")
+        if not strategy_id:
+            raise ValueError("parameter tune task requires a strategy_id")
+        param_grids = payload.get("param_grids")
+        if not isinstance(param_grids, dict) or not param_grids:
+            raise ValueError("param_grids must be a non-empty object")
+        config = self._config(payload, strategy_id)
+        tuner = ParameterTuner(
+            self.backtest_runs,
+            max_combinations=int(payload.get("max_combinations", 50)),
+        )
+        result = tuner.tune(
+            strategy_id=strategy_id,
+            venue_id=self._text(payload, "venue_id"),
+            symbol=self._text(payload, "symbol"),
+            interval=self._text(payload, "interval"),
+            param_grids={str(k): list(v) for k, v in param_grids.items()},
+            base_config=config,
+            metric=str(payload.get("metric", "total_return_pct")),
+            max_combinations=int(payload.get("max_combinations", 50)),
+            validation_ratio=float(payload.get("validation_ratio", 0.3)),
+            validation_top_n=int(payload.get("validation_top_n", 10)),
+        )
+        result_dict = result.as_dict()
+        try:
+            self.tune_history.save(result_dict)
+        except Exception:
+            pass
+        return result_dict
 
     def _run_pool_backtest(
         self,

@@ -301,6 +301,16 @@ class ParameterTuneRequest(BaseModel):
         description="Optimization metric: total_return_pct, max_drawdown_pct, win_rate_pct",
     )
     max_combinations: int = Field(default=50, ge=1, le=200)
+    validation_ratio: float = Field(
+        default=0.3,
+        ge=0.0,
+        lt=0.5,
+        description="0 disables train/validation split; e.g. 0.3 uses last 30% as validation",
+    )
+    validation_top_n: int = Field(
+        default=10, ge=1, le=50,
+        description="Top-N train performers advancing to the validation window",
+    )
     initial_quote: Decimal = Field(default=Decimal("10000"), gt=0)
     initial_base: Decimal = Field(default=Decimal("0"), ge=0)
     fee_bps: Decimal = Field(default=Decimal("10"), ge=0, le=1000)
@@ -336,12 +346,20 @@ def tune_parameters(
 
     Runs a backtest for each parameter combination and ranks by the
     optimization metric. Synchronous; bounded by max_combinations.
+    When validation_ratio > 0, splits the dataset by time into train and
+    validation windows: all combinations run on train, the top
+    validation_top_n advance to validation, and final ranking uses a
+    robust score with an overfitting guard (profitable on both windows).
+
+    When the Redis task queue is enabled, large tunings are dispatched as
+    background tasks (202 Accepted); otherwise runs synchronously.
     """
     try:
         request.app.state.strategy_registry.assert_enabled(payload.strategy_id, "backtest")
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     from ..services.parameter_tuning import ParameterTuner
+    from ..services.task_dispatcher import TaskDispatchError, TaskDispatcher
 
     config = CandleBacktestConfig(
         strategy_id=payload.strategy_id,
@@ -355,6 +373,32 @@ def tune_parameters(
         momentum_threshold_pct=payload.momentum_threshold_pct,
         parameters={},
     )
+    dispatcher = request.app.state.task_dispatcher
+    if dispatcher.enabled:
+        tune_id = dispatcher.run_id()
+        task_payload = {
+            "tune_id": tune_id,
+            "venue_id": payload.venue_id,
+            "symbol": payload.symbol,
+            "interval": payload.interval,
+            "strategy_id": payload.strategy_id,
+            "param_grids": {k: list(v) for k, v in payload.param_grids.items()},
+            "metric": payload.metric,
+            "max_combinations": payload.max_combinations,
+            "validation_ratio": payload.validation_ratio,
+            "validation_top_n": payload.validation_top_n,
+            "config": dispatcher.config_payload(config),
+        }
+        try:
+            queued = dispatcher.dispatch(
+                "parameter_tune",
+                "参数调优",
+                task_payload,
+                task_id=TaskDispatcher.task_id("parameter_tune", tune_id),
+            )
+        except TaskDispatchError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=queued)
     tuner = ParameterTuner(
         request.app.state.backtest_runs,
         max_combinations=payload.max_combinations,
@@ -369,9 +413,100 @@ def tune_parameters(
             base_config=config,
             metric=payload.metric,
             max_combinations=payload.max_combinations,
+            validation_ratio=payload.validation_ratio,
+            validation_top_n=payload.validation_top_n,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except BacktestDataError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return result.as_dict()
+    result_dict = result.as_dict()
+    # Persist sync tune results so they appear in history alongside async ones.
+    try:
+        request.app.state.tune_history.save(result_dict)
+    except Exception:
+        pass
+    return result_dict
+
+
+@router.get("/tunes")
+def tune_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=50),
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    items = request.app.state.tune_history.list(limit)
+    return {"items": items, "count": len(items)}
+
+
+@router.get("/tunes/{tune_id}")
+def tune_detail(tune_id: str, request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    record = request.app.state.tune_history.get(tune_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="tune was not found")
+    return record
+
+
+@router.delete("/tunes/{tune_id}")
+def delete_tune(tune_id: str, request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    if not request.app.state.tune_history.delete(tune_id):
+        raise HTTPException(status_code=404, detail="tune was not found")
+    return {"status": "deleted", "tune_id": tune_id}
+
+
+class StrategyPresetRequest(BaseModel):
+    strategy_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=80)
+    parameters: dict[str, Any] = Field(min_length=1)
+    venue_id: str = Field(default="", max_length=32)
+    symbol: str = Field(default="", max_length=32)
+    interval: str = Field(default="", max_length=16)
+    tune_id: str = Field(default="", max_length=64)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    note: str = Field(default="", max_length=300)
+
+
+@router.get("/presets")
+def preset_list(
+    request: Request,
+    strategy_id: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=50, ge=1, le=100),
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    items = request.app.state.strategy_presets.list(strategy_id, limit)
+    return {"items": items, "count": len(items)}
+
+
+@router.post("/presets", status_code=status.HTTP_201_CREATED)
+def preset_create(
+    payload: StrategyPresetRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    try:
+        request.app.state.strategy_registry.assert_enabled(payload.strategy_id, "backtest")
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    try:
+        return request.app.state.strategy_presets.save(
+            strategy_id=payload.strategy_id,
+            name=payload.name,
+            parameters=payload.parameters,
+            venue_id=payload.venue_id,
+            symbol=payload.symbol,
+            interval=payload.interval,
+            tune_id=payload.tune_id,
+            metrics=payload.metrics,
+            note=payload.note,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.delete("/presets/{preset_id}")
+def preset_delete(
+    preset_id: str, request: Request, _: object = Depends(require_user)
+) -> dict[str, object]:
+    if not request.app.state.strategy_presets.delete(preset_id):
+        raise HTTPException(status_code=404, detail="preset was not found")
+    return {"status": "deleted", "preset_id": preset_id}
