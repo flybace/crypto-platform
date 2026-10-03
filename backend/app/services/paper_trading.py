@@ -20,7 +20,9 @@ from adapters.standalone.state_store import JsonStateError, JsonStateStore, Stat
 
 class PaperTradingService:
     VENUE_IDS = ("binance", "okx", "bybit")
-    DEFAULT_BALANCES = {"USDT": "10000", "BTC": "0.1", "ETH": "1", "BNB": "5"}
+    # 干净的默认余额：纯 USDT，不带任何币种库存。
+    # 策略从 0 持仓开始，所有买入都走真实信号逻辑。
+    DEFAULT_BALANCES = {"USDT": "10000"}
 
     def __init__(
         self,

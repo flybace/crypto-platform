@@ -792,6 +792,10 @@ export type PaperLiveConfig = {
 
 export type PaperLiveInstance = PaperLiveConfig & {
   instance_id: string;
+  account?: {
+    venue_id: string;
+    balances: Record<string, string>;
+  } | null;
 };
 
 export type PaperFollowConfig = {

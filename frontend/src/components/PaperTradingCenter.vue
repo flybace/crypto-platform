@@ -462,6 +462,21 @@ const deleteInstance = async (inst: PaperLiveInstance) => {
   }
 };
 
+const resetInstanceAccount = async (inst: PaperLiveInstance) => {
+  if (!confirm(`确定重置该策略的模拟账户为纯 USDT 10000 吗？当前持仓会被清空。`)) return;
+  liveSaving.value = true;
+  error.value = '';
+  try {
+    await api.post(`/paper/live/instances/${inst.instance_id}/reset-account`);
+    await refreshInstances();
+    notice.value = '模拟账户已重置为纯 USDT 10000';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '账户重置失败';
+  } finally {
+    liveSaving.value = false;
+  }
+};
+
 const runInstance = async (inst: PaperLiveInstance) => {
   liveRunning.value = true;
   error.value = '';
@@ -580,7 +595,7 @@ onMounted(loadData);
       <!-- 实例列表 -->
       <div v-if="liveInstances.length" class="order-table-wrap">
         <table class="order-table">
-          <thead><tr><th>市场</th><th>品种</th><th>周期</th><th>策略</th><th>状态</th><th>上次执行</th><th>信号</th><th>下单</th><th>风控</th><th>操作</th></tr></thead>
+          <thead><tr><th>市场</th><th>品种</th><th>周期</th><th>策略</th><th>状态</th><th>账户余额</th><th>上次执行</th><th>信号</th><th>下单</th><th>风控</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="inst in liveInstances" :key="inst.instance_id">
               <td>{{ inst.venue_id }}</td>
@@ -588,6 +603,7 @@ onMounted(loadData);
               <td>{{ inst.interval }}</td>
               <td>{{ inst.strategy_id }}</td>
               <td><strong :class="inst.enabled ? 'positive' : ''">{{ inst.enabled ? '运行中' : '已停止' }}</strong></td>
+              <td class="mono">{{ inst.account ? Object.entries(inst.account.balances).map(([k, v]) => k + ':' + formatNumber(v, k === 'USDT' ? 2 : 6)).join(' ') : '—' }}</td>
               <td class="follow-time">{{ inst.last_tick_at ? formatDate(inst.last_tick_at) : '—' }}</td>
               <td>{{ inst.last_signal || '—' }}</td>
               <td>{{ inst.trade_count }}</td>
@@ -597,6 +613,7 @@ onMounted(loadData);
                 <button v-else class="danger-button" type="button" :disabled="liveSaving" @click="setInstanceEnabled(inst, false)">停止</button>
                 <button class="secondary-button" type="button" :disabled="liveRunning || !inst.enabled" @click="runInstance(inst)">执行</button>
                 <button class="secondary-button" type="button" @click="editInstance(inst)">编辑</button>
+                <button class="secondary-button" type="button" :disabled="liveSaving" @click="resetInstanceAccount(inst)" title="重置为纯 USDT 10000">重置账户</button>
                 <button class="danger-button" type="button" :disabled="liveSaving" @click="deleteInstance(inst)">删除</button>
               </td>
             </tr>
