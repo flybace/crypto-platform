@@ -67,6 +67,7 @@ class PaperStrategyRunRequest(BaseModel):
     allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
     momentum_threshold_pct: Decimal = Field(default=Decimal("0.02"), ge=0, le=10)
     strategy_parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
+    news_gate: bool = Field(default=False, description="风险新闻门控:风险事件发布后按建议时长拦截新开仓(只拦截多头开仓,不拦截离场)")
 
     @model_validator(mode="after")
     def validate_windows(self) -> "PaperStrategyRunRequest":
@@ -111,8 +112,57 @@ class PaperFollowRequest(BaseModel):
         return _decimal(value)
 
 
+class PaperLiveRequest(BaseModel):
+    enabled: bool = False
+    venue_id: str = Field(default="binance", min_length=1, max_length=32)
+    symbol: str = Field(default="BTC/USDT", min_length=2, max_length=32)
+    interval: Literal["1d", "1h", "5m"] = "1h"
+    strategy_id: str = Field(default="macd_reversal", min_length=1, max_length=64)
+    strategy_parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
+    allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
+
+    @field_validator("allocation_ratio", mode="before")
+    @classmethod
+    def finite_decimal(cls, value):
+        return _decimal(value)
+
+
 def _service(request: Request):
     return request.app.state.paper_trading
+
+
+def _risk_news_events(request: Request, *, symbol: str) -> tuple[dict[str, object], ...]:
+    """Fetch risk-level news events relevant to a symbol for the news gate.
+
+    Returns a point-in-time snapshot; the replay engine additionally filters
+    by each candle's time so the replay never peeks into the future.
+    """
+    normalized = str(symbol or "").strip().upper()
+    try:
+        events = request.app.state.news_service.events(sentiment="risk", limit=200)
+    except Exception:
+        return ()
+    selected = []
+    for event in events:
+        symbols = {str(value).upper() for value in event.get("symbols", [])}
+        if symbols and normalized not in symbols:
+            continue
+        topics = [str(value) for value in event.get("topics", [])]
+        selected.append({
+            "published_at": event.get("published_at"),
+            "symbols": sorted(symbols),
+            "sentiment": event.get("sentiment"),
+            "risk_level": event.get("risk_level"),
+            "title": event.get("title"),
+            "suggested_duration_hours": _suggested_duration(topics),
+        })
+    return tuple(selected)
+
+
+def _suggested_duration(topics: list[str]) -> int:
+    from backend.app.services import news_intel
+
+    return news_intel.suggested_duration_hours(topics)
 
 
 @router.get("/follow")
@@ -172,6 +222,36 @@ def run_follow(request: Request, _: object = Depends(require_user)) -> dict[str,
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return {"snapshot": snapshot}
+
+
+@router.get("/live")
+def live(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    service = request.app.state.paper_live
+    return service.get()
+
+
+@router.put("/live")
+def update_live(
+    payload: PaperLiveRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    service = request.app.state.paper_live
+    try:
+        return service.update(payload.model_dump(mode="json"))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/live/run", status_code=status.HTTP_201_CREATED)
+def run_live(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    service = request.app.state.paper_live
+    if not service.get().get("enabled"):
+        raise HTTPException(status_code=422, detail="paper live loop is disabled")
+    try:
+        return service.tick()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/summary")
@@ -259,7 +339,11 @@ def run_strategy(payload: PaperStrategyRunRequest, request: Request, _: object =
             allocation_ratio=payload.allocation_ratio,
             momentum_threshold_pct=payload.momentum_threshold_pct,
             parameters=payload.strategy_parameters,
+            news_gate=payload.news_gate,
         )
+        news_events: tuple[dict[str, object], ...] = ()
+        if payload.news_gate:
+            news_events = _risk_news_events(request, symbol=payload.symbol)
         dispatcher = request.app.state.task_dispatcher
         if dispatcher.enabled:
             run_id = dispatcher.run_id()
@@ -273,6 +357,7 @@ def run_strategy(payload: PaperStrategyRunRequest, request: Request, _: object =
                     "interval": payload.interval,
                     "strategy_id": payload.strategy_id,
                     "config": dispatcher.config_payload(config),
+                    "news_events": [dict(event) for event in news_events],
                 },
                 task_id=TaskDispatcher.task_id("paper_strategy", run_id),
             )
@@ -282,6 +367,7 @@ def run_strategy(payload: PaperStrategyRunRequest, request: Request, _: object =
             symbol=payload.symbol,
             interval=payload.interval,
             config=config,
+            news_events=news_events,
         )
     except TaskDispatchError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error

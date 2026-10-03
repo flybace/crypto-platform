@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -66,6 +68,7 @@ from .services.domain_state import build_domain_state, build_runtime_state  # no
 from .services.paper_trading import PaperTradingService  # noqa: E402
 from .services.paper_automation import PaperAutomationService  # noqa: E402
 from .services.paper_follow import PaperFollowService  # noqa: E402
+from .services.paper_live import PaperLiveService  # noqa: E402
 from .services.risk_policy import RiskPolicyService  # noqa: E402
 from .services.research_runs import ResearchRunService  # noqa: E402
 from .services.strategy_registry import StrategyRegistry  # noqa: E402
@@ -242,10 +245,16 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        paper_live_task = asyncio.create_task(_paper_live_engine())
         try:
             account_recon_scheduler.start()
             yield
         finally:
+            paper_live_task.cancel()
+            try:
+                await paper_live_task
+            except asyncio.CancelledError:
+                pass
             try:
                 close_tickers = getattr(runtime_ticker_service, "close", None)
                 if callable(close_tickers):
@@ -385,6 +394,33 @@ def create_app(
     app.state.paper_follow = PaperFollowService(
         state_path=runtime_state_root / "paper-follow.json",
     )
+    app.state.paper_live = PaperLiveService(
+        paper_trading,
+        strategy_registry,
+        runtime_history_service.storage,
+        state_store=domain_state("paper-live.json"),
+    )
+    paper_live_service = app.state.paper_live
+    paper_live_logger = logging.getLogger("crypto.paper_live")
+
+    async def _paper_live_engine() -> None:
+        """策略引擎：策略启动后独立运行，每 60 秒检查一次。
+
+        不依赖历史同步调度器——策略有自己的运行循环：
+        启动策略 → 每轮读最新已收盘 K 线 → 有信号就自动下单（模拟）。
+        tick 本身幂等（每根 K 线最多一笔），频繁检查安全。
+        """
+        while True:
+            try:
+                outcome = await asyncio.to_thread(paper_live_service.tick)
+                status = outcome.get("status") if isinstance(outcome, dict) else "?"
+                if status not in {"disabled", "no_new_candle"}:
+                    paper_live_logger.info("paper live tick: %s", outcome)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # 引擎永不崩溃，报错只记日志
+                paper_live_logger.warning("paper live tick failed: %s", error)
+            await asyncio.sleep(60)
     app.state.risk_policy = RiskPolicyService(state_store=domain_state("risk-policy.json"))
     app.state.domain_state = task_store
     app.add_middleware(

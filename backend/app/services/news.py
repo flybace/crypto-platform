@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 import hashlib
 from pathlib import Path
@@ -17,6 +17,16 @@ from backend.app.services.market_summary import build_market_summary
 
 SENTIMENTS = frozenset({"positive", "neutral", "risk"})
 RISK_LEVELS = frozenset({"low", "medium", "high"})
+
+
+def _parse_time(value: object) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 class NewsError(ValueError):
@@ -162,7 +172,7 @@ class NewsService:
             },
             "research_only": True,
             "execution_eligible": False,
-            "source_mode": "explicit_ingestion_only",
+            "source_mode": "rss_and_manual",
             "note": "事件必须带来源；没有外部新闻连接器时不会伪造实时消息。",
         }
 
@@ -226,6 +236,36 @@ class NewsService:
             "execution_eligible": False,
             "note": "消息共振只用于候选排序；必须经过历史回测、模拟盘和风控，不能直接下单。",
         }
+
+    def advice(self, *, limit: int = 50, hours: int = 72) -> list[dict[str, object]]:
+        """Machine-readable strategy advice derived from major news clusters."""
+        from backend.app.services import news_intel
+
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
+        events = [
+            event for event in self.events(limit=200)
+            if _parse_time(event.get("published_at")) >= cutoff
+        ]
+        advice: list[dict[str, object]] = []
+        for cluster in news_intel.cluster_events(events):
+            if not news_intel.is_major(cluster):
+                continue
+            for item in news_intel.advise_cluster(cluster):
+                advice.append({
+                    **item,
+                    "title": cluster.get("title"),
+                    "topics": cluster.get("topics"),
+                    "sentiment": cluster.get("sentiment"),
+                    "sources": cluster.get("sources"),
+                })
+        advice.sort(key=lambda item: int(item.get("impact_score", 0)), reverse=True)  # type: ignore[arg-type]
+        return advice[: max(1, min(int(limit), 200))]
+
+    def ranking(self, *, hours: int = 72) -> list[dict[str, object]]:
+        """消息面选币榜: per-symbol news attention ranking (选币辅助)."""
+        from backend.app.services import news_intel
+
+        return news_intel.rank_symbols(self.events(limit=200), hours=hours)
 
     def _load(self) -> None:
         if self._state is None:

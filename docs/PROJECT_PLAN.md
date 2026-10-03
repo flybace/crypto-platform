@@ -3217,3 +3217,119 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 全量回归：unit + integration 299 passed；前端 `npm run build` 成功。
 - 真实链路：手动回放 `macd_reversal(fast=8, slow=26, signal=7)` 完成，记录含参数；跟盯一次，快照含 `{"fast":"8","signal":"7","slow":"26"}`。验证后跟盯与自动回放均恢复关闭。
 - Playwright 截图：`crypto-shots/29-模拟盘完善-回放参数.png`、`30-模拟盘完善-回放详情.png`、`31-模拟盘完善-跟盯详情.png`。
+
+### 31.40 2026-10-03 新闻智能第一层：RSS 接入 + 规则智能 + 选币榜 + 策略建议 + 回放门控 + AI 接入
+
+分支：`codex/news-intel`。
+
+做了什么：
+- RSS 自动接入：CoinDesk / CoinTelegraph RSS + alternative.me 恐惧贪婪指数，无需 key；scheduler 每 15 分钟自动抓取（`NewsIngestor`，失败不影响 tick），重大事件写 WARNING 日志；`POST /api/v1/news/ingest/run` 可手动触发。
+- 规则智能（`backend/app/services/news_intel.py`，无 LLM、确定性、可审计）：品种映射（关键词 + `$BTC` 标签，18 个主流币）、分类（hack/regulation/etf/macro/listing/whale/upgrade 带权重）、加密词典情绪打分（-1~+1）、影响分（热度×情绪极端度×分类权重）、跨来源聚类（标题相似度≥0.5 合并，heat=报道家数）、重大判定（影响≥65 且 heat≥2，或 risk 且影响≥60）。
+- 策略建议：`GET /api/v1/news/advice`，每条重大事件按品种生成机器可读建议（暂停新开仓 / 关注做多信号 / 继续观察 + 原因）。
+- 消息面选币榜：`GET /api/v1/news/ranking`，72h 按品种加权聚合新闻分与情绪方向。
+- 回放新闻门控：`CandleBacktestConfig.news_gate` + `news_block_hours`；引擎按事件 `published_at` 建阻断窗口（只看过去、不偷看未来），风险窗口内拦截新开仓、不拦截离场；结果含 `news_blocked_entries`；API `POST /paper/strategy-runs` 新增 `news_gate` 参数（直连与 worker 两条链路都透传事件快照）。
+- AI 接入（前端直连）：`frontend/src/ai/provider.ts`，OpenAI 兼容网关（本地 sub2api），配置存本机浏览器 localStorage，Key 不经过服务端；AI 能力页新增"模型接入"面板（保存 + 测试连接）；新闻事件行新增"AI 解读"按钮，调用户网关生成一句话解读 + 品种影响 + 策略建议。
+
+验证：
+- 单元测试：`tests/unit/test_news_intel.py` 10 passed（映射/分类/情绪/聚类/重大/建议/选币榜）；`tests/unit/test_news_gate.py` 5 passed（拦截/不拦离场/忽略未来事件/忽略非风险/窗口过期）。
+- 全量回归：unit + integration 314 passed；`compileall` 通过；前端 `npm run build` 成功。
+- 真实链路：真实 RSS 抓取 51 条入库 0 错误；选币榜正确识别 NEAR 被黑事件（risk，3 家报道）；重大建议生成正常；sma_cross 在 BTC/USDT 1h 上关门控 12 笔、开门控 6 笔/拦截 3 次；scheduler 重启后自动抓取并告警 6 个重大事件。
+- Playwright 截图：`crypto-shots/32-新闻智能-选币榜.png`、`33-AI能力-模型接入.png`、`34-模拟盘-新闻门控.png`。
+
+边界：
+- 规则智能不懂语义，情绪词典精度有限；真正的语义解读走用户自备网关（第二层）。
+- 新闻仍不直接下单（执行 DISABLED）；门控默认关闭，需用户在回放时显式开启。
+
+### 31.41 2026-10-03 新闻页改版：折叠长尾面板 + AI 解读入口显性化
+
+分支：`codex/news-intel`。
+
+做了什么：
+- 页头一句话讲清新闻页用途：自动抓取 → 规则分析（选币榜/策略建议）→ 事件行「AI 解读」看语义分析。
+- 事件记录上移到选币榜/策略建议之后；事件行图标按钮改为带文字的「AI 解读」按钮（解读中显示「解读中」）。
+- 未配置模型时顶部显示引导横幅，一键跳转「AI 能力」页（`go-assistant` 事件，`WorkspaceView` 切换 section）。
+- 「登记研究事件」（手动表单，RSS 自动抓取后很少用）与「行情共振」默认折叠，点击标题展开/收起。
+
+验证：
+- 前端 `npm run build` 成功。
+- Playwright 真实浏览器验证（登录 → 新闻页）：56 个「AI 解读」按钮、引导横幅、两个折叠面板均正常；截图 `crypto-shots/36-新闻页-改版.png`、`37-新闻页-事件AI按钮.png`、`38-新闻页-折叠面板.png`。
+
+边界：
+- 无后端改动；AI 解读仍走用户浏览器直连自备网关，Key 不经过服务端。
+
+### 31.42 2026-10-03 AI 研判：新闻 + 规则 + 技术面综合给出投资建议
+
+分支：`codex/news-intel`。
+
+做了什么：
+- 策略建议卡新增「AI 研判」按钮（手动触发，避免烧用户模型额度）；点击后弹窗展示结构化研判。
+- 研判 prompt（`frontend/src/ai/provider.ts::judgeAdvice`）把多因素一起喂给模型：新闻事由/依据标题/相关事件摘要 + 规则层结论（建议动作/紧急度/建议时长/仓位指引/四类策略话术）+ 价格技术面（该品种近 1h 涨跌，取自行情共振）。
+- 模型按五节输出简体中文：综合方向、置信度、四类策略操作建议、风险提示、有效期；prompt 明确"新闻只是因素之一，不要只看新闻字面下结论"，不预测具体点位。
+- 仍走用户浏览器直连自备网关，Key 不经过服务端；研判结果仅供研究参考，不构成投资建议，不下单。
+- 中文新闻源结论：金色财经 / PANews / Foresight / 巴比特均无稳定可用 RSS（无 feed、连不上或被 Cloudflare 拦截），不硬接；AI 解读/研判本身输出简体中文，英文原文不影响使用。
+
+验证：
+- 前端 `npm run build` 成功；`buildJudgePrompt` 组装测试通过。
+- Playwright 真实浏览器验证：12 张建议卡均有「AI 研判」按钮；未配置模型时点击正确提示去 AI 能力页配置（守卫生效）。
+
+边界：
+- 手动触发，未做定时自动研判（自动跑会持续消耗用户 DeepSeek 额度，需用户明确批准再做）。
+
+### 31.43 2026-10-03 实盘模拟循环：策略信号直达模拟账号下单
+
+分支：`codex/paper-live`。
+
+背景：此前模拟盘的策略回放与模拟账号是脱节的——回放只记绩效记录，从不在模拟账号上下单；`POST /paper/orders` 只能手单。用户要求"模拟盘用模拟账号先弄起来"。
+
+做了什么：
+- 新增 `backend/app/services/paper_live.py::PaperLiveService`：实盘模拟循环。每 tick 取最新 K 线，用 `CandleBacktestEngine.signal_at` 计算最新收盘 K 线的策略信号（不偷看未来），按信号翻仓：BUY 且空仓 → 按 `allocation_ratio` 比例用 quote 余额买入；SELL 且持仓 → 全平。经 `PaperTradingService.submit` 走模拟撮合，只写模拟账本。
+- 幂等：每根 K 线最多交易一次（`last_candle_time`）；订单 request_id 按 `paper-live:{venue}:{symbol}:{interval}:{candle}:{side}` 确定性生成，重试不重复下单。
+- 调度器（`src/services/task_scheduler.py`）：历史同步 `up_to_date` 后自动跑一轮 `tick()`；失败只记 warning，不影响主流程。默认关闭，用户在模拟盘页显式启用。
+- **2026-10-04 架构修正（用户纠正）**：用户指出其 A 股量化逻辑是"策略启动→自动下单"，策略应独立运行而非挂靠历史同步。改为策略为中心：后端 `main.py` lifespan 启动策略引擎后台任务，每 60 秒独立 tick 一次（`asyncio.to_thread` 避免阻塞事件循环，异常只记日志不崩溃）；调度器彻底解耦（删除 `_maybe_run_paper_live` 及 PaperLiveService 构造），回归只做历史同步+新闻。前端面板改为显式「启动策略/停止策略」按钮（替代复选框），状态区显示运行中/已停止。
+- API：`GET /paper/live`、`PUT /paper/live`（配置）、`POST /paper/live/run`（手动执行一次）。
+- 前端模拟盘页新增「实盘模拟」面板：市场/品种/周期/策略/参数/仓位比例、启用开关、保存配置、立即执行一次、状态（上次执行/信号/累计下单）与最近成交表。
+- 运维：Binance 在本机被地理封锁、Bybit 403，调度器改为 `--venues okx --intervals 1h,1d` 只同步 OKX（否则全局退避导致自动循环不触发；5m 周期因每 5 分钟一根新线永远到不了 up_to_date）；setup.sh 与 launch-all.sh 已同步该改动。调度器退避状态存在 PostgreSQL `control_domain_snapshots`（key `crypto.runtime.history-scheduler`），改 JSON 文件无效。
+
+验证：
+- 单测 `tests/unit/test_paper_live.py` 16 passed（信号→订单决策表、每 K 线只交易一次、确定性 request_id、配置校验）；全量 unit+integration 332 passed。
+- 真实链路：启用后手动 tick，OKX BTC/USDT 1h 最新 K 线信号为 null → 正确无交易；前端构建通过；Playwright 真实浏览器验证面板渲染与"运行中"状态。
+
+边界：
+- 只碰模拟撮合器，真实执行保持 DISABLED；不连真实 API Key。
+- 首次启用不会追补历史信号（避免追旧信号），只对新 K 线动作。
+- 回测/调参里"调到赚钱"的边界不变：实盘模拟的盈亏同样不代表未来。
+
+### 31.44 2026-10-04 开发思路重整：单主链路 + 分支合并 + 页面瘦身
+
+背景：用户指出系统"有点乱了"。诊断：①模拟盘一页塞了手动回放/自动回放/自动跟盯/实盘模拟 4 个概念，前三个看历史、只有第四个真跑策略；②8 个功能分支未合并，`main` 陈旧；③计划书 M0-M8 描述的大架构（GACE/真实交易）与用户实际需求（策略→回测→调参→启动→模拟下单）脱节；④新闻/AI 已叫停但代码页面仍在。
+
+决策（用户批准执行）：
+
+**1. 单主链路（唯一优先级）**
+~~~text
+历史数据(后台自动同步)
+    ↓
+策略研究：回测验证 → 自动调参(过拟合门禁)
+    ↓
+策略启动 → 引擎每60秒跑 → 有信号自动下单(模拟)
+    ↓
+绩效跟踪：收益、回撤、成交记录
+~~~
+
+**2. 页面职责切分**
+- 策略页：10 策略参数配置、回测入口（纯研究）
+- 回测页：历史回放、调参（纯研究，不碰账户）
+- 模拟盘页：只留①实盘模拟（启动/停止/持仓/成交，核心）②模拟账户总览；手动回放与自动跟盯移出（回放归回测页，跟盯概念并入绩效）
+- 账户页：M5 只读（等用户提供只读 API Key）
+- 冻结：新闻、AI 研判、GACE——代码保留，不再投入
+
+**3. 分支合并**
+将 `codex/paper-live`、`codex/tune-to-paper`、`codex/paper-refine`、`codex/paper-follow`、`codex/strategy-tuning-v2`、`codex/m5-readonly-account-foundation`、`codex/market-ashare-theme` 合并入 `main`，合完删分支；`codex/news-intel` 冻结保留。此后规矩：一个功能一个分支，验证完即合即删，`main` 永远可跑。
+
+**4. 后续优先级（按"策略是大头"）**
+1. 策略引擎独立运行（§31.43 已完成）
+2. 风控接入实盘模拟：仓位上限、止损、单日最大亏损（M5 底座已有）
+3. 多策略多品种（当前一次一策略一品种）
+4. 绩效看板：收益曲线、回撤统计
+5. 真实账户只读验证（等用户 Key）
+- M6 真实下单：用户明确暂不做。

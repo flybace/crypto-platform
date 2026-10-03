@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { AlertTriangle, BriefcaseBusiness, CircleDollarSign, FlaskConical, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck } from 'lucide-vue-next';
+import { AlertTriangle, BriefcaseBusiness, Check, CircleDollarSign, FlaskConical, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Square } from 'lucide-vue-next';
 import { api } from '../api';
-import type { HistoryCoverage, HistoryDataset, PaperAccountSummary, PaperAutomation, PaperFollowConfig, PaperFollowSnapshot, PaperFollowState, PaperOrder, PaperSummary, QueuedTaskResponse, StrategyDefinition } from '../types';
+import type { HistoryCoverage, HistoryDataset, PaperAccountSummary, PaperAutomation, PaperFollowConfig, PaperFollowSnapshot, PaperFollowState, PaperLiveConfig, PaperOrder, PaperSummary, QueuedTaskResponse, StrategyDefinition } from '../types';
 import { isQueuedTask, resolveTaskResponse, taskStatusLabel } from '../services/taskPolling';
 
 const summary = ref<PaperSummary | null>(null);
@@ -23,6 +23,7 @@ const notice = ref('');
 const taskMessage = ref('');
 const strategyId = ref('sma_cross');
 const replayParams = ref<Record<string, string>>({});
+const newsGate = ref(false);
 const expandedRunId = ref<string | null>(null);
 const expandedSnapshotId = ref<string | null>(null);
 const automationRunning = ref(false);
@@ -60,6 +61,25 @@ const followForm = ref<PaperFollowConfig>({
 const followState = ref<PaperFollowState | null>(null);
 const followSaving = ref(false);
 const followRunning = ref(false);
+const liveForm = ref<PaperLiveConfig>({
+  enabled: false,
+  venue_id: 'binance',
+  symbol: 'BTC/USDT',
+  interval: '1h',
+  strategy_id: 'macd_reversal',
+  strategy_parameters: { fast: 8, slow: 26, signal: 7 },
+  allocation_ratio: '1',
+  last_candle_time: null,
+  last_signal: null,
+  last_tick_at: null,
+  last_order_id: null,
+  trade_count: 0,
+  updated_at: null,
+  recent_trades: [],
+});
+const liveSaving = ref(false);
+const liveRunning = ref(false);
+const liveResult = ref('');
 const followIntervals = [
   { value: 3600, label: '每小时' },
   { value: 21600, label: '每 6 小时' },
@@ -136,6 +156,29 @@ const onAutomationStrategyChange = () => {
   );
 };
 
+const liveStrategyDef = computed(() => strategies.value.find((item) => item.strategy_id === liveForm.value.strategy_id) || null);
+const liveParameterFields = computed(() => {
+  const schema = liveStrategyDef.value?.parameter_schema;
+  if (!Array.isArray(schema)) return [];
+  return (schema as any[])
+    .map((field) => ({
+      key: String(field.key || ''),
+      label: String(field.label || field.key || '策略参数'),
+      type: String(field.type || 'number'),
+      default: field.default as string | number | undefined,
+      min: field.min as string | number | undefined,
+      max: field.max as string | number | undefined,
+    }))
+    .filter((field) => field.key && !['fast_window', 'slow_window'].includes(field.key));
+});
+
+const onLiveStrategyChange = () => {
+  const params = liveForm.value.strategy_parameters;
+  liveForm.value.strategy_parameters = Object.fromEntries(
+    liveParameterFields.value.map((field) => [field.key, String((params as any)?.[field.key] ?? field.default ?? '')]),
+  );
+};
+
 const paramSummary = (params: any) => {
   if (!params || typeof params !== 'object') return '默认参数';
   const entries = Object.entries(params).filter(([, value]) => value !== '' && value !== null && value !== undefined);
@@ -164,7 +207,7 @@ const loadData = async () => {
   loading.value = true;
   error.value = '';
   try {
-    const [summaryResponse, orderResponse, coverageResponse, strategyRunResponse, strategyResponse, automationResponse, followResponse] = await Promise.all([
+    const [summaryResponse, orderResponse, coverageResponse, strategyRunResponse, strategyResponse, automationResponse, followResponse, liveResponse] = await Promise.all([
       api.get<PaperSummary>('/paper/summary'),
       api.get<{ items: PaperOrder[] }>('/paper/orders'),
       api.get<HistoryCoverage>('/history/coverage'),
@@ -172,6 +215,7 @@ const loadData = async () => {
       api.get<{ items: StrategyDefinition[] }>('/strategies/catalog'),
       api.get<PaperAutomation>('/paper/automation'),
       api.get<PaperFollowState>('/paper/follow'),
+      api.get<PaperLiveConfig>('/paper/live'),
     ]);
     summary.value = summaryResponse.data;
     orders.value = orderResponse.data.items;
@@ -184,6 +228,10 @@ const loadData = async () => {
     );
     followState.value = followResponse.data;
     followForm.value = { ...followForm.value, ...followResponse.data.config };
+    liveForm.value = { ...liveForm.value, ...liveResponse.data };
+    liveForm.value.strategy_parameters = Object.fromEntries(
+      Object.entries(liveForm.value.strategy_parameters || {}).map(([key, value]) => [key, String(value ?? '')]),
+    );
     const configuredDataset = automationDatasets.value.find((dataset) => (
       dataset.venue_id === automationForm.value.venue_id
       && dataset.interval === automationForm.value.interval
@@ -296,6 +344,68 @@ const runFollow = async () => {
   }
 };
 
+const saveLive = async () => {
+  liveSaving.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const { data } = await api.put<PaperLiveConfig>('/paper/live', liveForm.value);
+    liveForm.value = { ...liveForm.value, ...data };
+    notice.value = '实盘模拟配置已保存';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '实盘模拟配置保存失败';
+  } finally {
+    liveSaving.value = false;
+  }
+};
+
+const startLiveStrategy = async () => {
+  liveSaving.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const { data } = await api.put<PaperLiveConfig>('/paper/live', { ...liveForm.value, enabled: true });
+    liveForm.value = { ...liveForm.value, ...data };
+    notice.value = '策略已启动：引擎每 60 秒检查一次，有信号自动下单（模拟）';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '策略启动失败';
+  } finally {
+    liveSaving.value = false;
+  }
+};
+
+const stopLiveStrategy = async () => {
+  liveSaving.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const { data } = await api.put<PaperLiveConfig>('/paper/live', { ...liveForm.value, enabled: false });
+    liveForm.value = { ...liveForm.value, ...data };
+    notice.value = '策略已停止：不再自动下单';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '策略停止失败';
+  } finally {
+    liveSaving.value = false;
+  }
+};
+
+const runLive = async () => {
+  liveRunning.value = true;
+  error.value = '';
+  notice.value = '';
+  liveResult.value = '';
+  try {
+    const { data } = await api.post<{ status: string; signal?: string | null; trade?: { side: string; quantity: string } }>('/paper/live/run');
+    await loadData();
+    const statusText: Record<string, string> = { traded: '已下单', checked: '已检查(无信号)', no_new_candle: '无新 K 线', skipped: '已跳过' };
+    liveResult.value = `执行结果：${statusText[data.status] || data.status}${data.signal ? ' · 信号 ' + data.signal : ''}${data.trade ? ` · ${data.trade.side === 'BUY' ? '买入' : '卖出'} ${formatNumber(data.trade.quantity, 6)}` : ''}`;
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || '实盘模拟执行失败';
+  } finally {
+    liveRunning.value = false;
+  }
+};
+
 const runStrategy = async () => {
   if (!selectedDataset.value) {
     error.value = '没有质量通过的小时线数据集';
@@ -314,6 +424,7 @@ const runStrategy = async () => {
       fee_bps: summary.value?.fee_bps || '10',
       slippage_bps: '5',
       strategy_parameters: { ...replayParams.value },
+      news_gate: newsGate.value,
     });
     let data: any;
     if (isQueuedTask(response.data)) {
@@ -388,9 +499,10 @@ onMounted(loadData);
     <section class="paper-banner"><AlertTriangle :size="17" /><div><strong>模拟环境</strong><span>所有订单只写入内存模拟账户，服务端真实执行模式为 DISABLED。</span></div></section>
     <section class="paper-panel automation-panel" aria-labelledby="paper-automation-title"><div class="section-heading"><div><p class="kicker">PAPER AUTOMATION</p><h2 id="paper-automation-title">自动策略回放</h2></div><Play :size="18" class="section-icon" /></div><div class="automation-form"><label><span>历史数据集</span><select v-model="automationDatasetId" @change="applyAutomationDataset"><option v-for="dataset in automationDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.interval }} · {{ dataset.row_count }} 根</option></select></label><label><span>策略</span><select v-model="automationForm.strategy_id" @change="onAutomationStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><div v-if="automationParameterFields.length" class="replay-params"><label v-for="field in automationParameterFields" :key="field.key"><span>{{ field.label }}</span><input v-model="automationForm.strategy_parameters[field.key]" type="number" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div><label class="automation-check"><input v-model="automationForm.enabled" type="checkbox" /><span>允许手动触发</span></label><button class="secondary-button" type="button" :disabled="automationSaving" @click="saveAutomation"><Save v-if="!automationSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ automationSaving ? '保存中' : '保存配置' }}</span></button><button class="paper-submit" type="button" :disabled="automationRunning || !automationForm.enabled || !automationDatasetId" @click="runAutomation"><Play v-if="!automationRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ automationRunning ? '运行中' : '立即回放' }}</span></button></div><p class="paper-note"><ShieldCheck :size="13" /> 仅在当前服务中执行历史策略回放，不提交交易所订单，不改变模拟账户余额。</p></section>
     <section class="paper-panel follow-panel" aria-labelledby="paper-follow-title"><div class="section-heading"><div><p class="kicker">PAPER FOLLOW</p><h2 id="paper-follow-title">自动跟盯</h2></div><Play :size="18" class="section-icon" /></div><div class="automation-form follow-form"><label><span>跟盯周期</span><select v-model="followForm.interval_seconds"><option v-for="option in followIntervals" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><label><span>收益告警线（%）</span><input v-model="followForm.alert_min_return_pct" type="number" step="0.1" /></label><label><span>回撤告警线（%）</span><input v-model="followForm.alert_max_drawdown_pct" type="number" step="0.5" min="0" /></label><label><span>跑输市场告警（%）</span><input v-model="followForm.alert_underperform_pct" type="number" step="0.5" min="0" /></label><label class="automation-check"><input v-model="followForm.enabled" type="checkbox" /><span>启用自动跟盯</span></label><button class="secondary-button" type="button" :disabled="followSaving" @click="saveFollow"><Save v-if="!followSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ followSaving ? '保存中' : '保存配置' }}</span></button><button class="paper-submit" type="button" :disabled="followRunning || !followForm.enabled || !automationForm.enabled" @click="runFollow"><Play v-if="!followRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ followRunning ? '跟盯中' : '立即跟盯' }}</span></button></div><div v-if="followState?.latest" class="follow-latest" aria-label="最新跟盯快照"><article><span>快照时间</span><strong class="follow-time">{{ formatDate(followState.latest.at) }}</strong></article><article><span>策略收益</span><strong :class="Number(followState.latest.strategy_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(followState.latest.strategy_return_pct, 2) }}%</strong></article><article><span>市场收益</span><strong :class="Number(followState.latest.market_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(followState.latest.market_return_pct, 2) }}%</strong></article><article><span>超额收益</span><strong :class="Number(followState.latest.excess_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(followState.latest.excess_return_pct, 2) }}%</strong></article><article><span>最大回撤</span><strong>{{ formatNumber(followState.latest.max_drawdown_pct, 2) }}%</strong></article><article><span>告警</span><strong v-if="followState.latest.alerts.length" class="follow-alert">{{ followState.latest.alerts.map(alertLabel).join('、') }}</strong><strong v-else class="follow-ok">正常</strong></article></div><div v-if="followState && followState.snapshots.length" class="order-table-wrap"><table class="order-table"><thead><tr><th>时间</th><th>策略</th><th>策略收益</th><th>市场收益</th><th>超额</th><th>最大回撤</th><th>交易</th><th>告警</th></tr></thead><tbody><template v-for="snapshot in followState.snapshots" :key="snapshot.run_id"><tr class="snapshot-row" :class="{ expanded: expandedSnapshotId === snapshot.run_id }" @click="toggleSnapshotDetail(snapshot.run_id)"><td>{{ formatDate(snapshot.at) }}</td><td>{{ snapshot.strategy_id }}</td><td :class="Number(snapshot.strategy_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(snapshot.strategy_return_pct, 2) }}%</td><td :class="Number(snapshot.market_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(snapshot.market_return_pct, 2) }}%</td><td :class="Number(snapshot.excess_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(snapshot.excess_return_pct, 2) }}%</td><td>{{ formatNumber(snapshot.max_drawdown_pct, 2) }}%</td><td>{{ snapshot.orders }}</td><td><span v-if="snapshot.alerts.length" class="follow-alert">{{ snapshot.alerts.map(alertLabel).join('、') }}</span><span v-else>—</span></td></tr><tr v-if="expandedSnapshotId === snapshot.run_id" class="snapshot-detail-row"><td colspan="8"><div class="snapshot-detail"><span><strong>参数</strong>{{ paramSummary(snapshot.strategy_parameters) }}</span><span><strong>胜率</strong>{{ formatNumber(snapshot.win_rate_pct, 1) }}%</span><span><strong>区间</strong>{{ formatDate(snapshot.start_at) }} → {{ formatDate(snapshot.end_at) }}</span><span><strong>K 线</strong>{{ snapshot.candle_count }} 根</span></div></td></tr></template></tbody></table></div><p class="paper-note"><ShieldCheck :size="13" /> 调度器按周期用最新历史自动回放当前策略，并与买入持有基准对比，只做绩效记录与告警，不提交交易所订单。</p></section>
+    <section class="paper-panel live-panel" aria-labelledby="paper-live-title"><div class="section-heading"><div><p class="kicker">LIVE PAPER</p><h2 id="paper-live-title">实盘模拟</h2></div><BriefcaseBusiness :size="18" class="section-icon" /></div><div class="automation-form"><label><span>市场</span><select v-model="liveForm.venue_id"><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label><label><span>品种</span><input v-model="liveForm.symbol" placeholder="BTC/USDT" /></label><label><span>周期</span><select v-model="liveForm.interval"><option value="5m">5 分钟</option><option value="1h">1 小时</option><option value="1d">1 日</option></select></label><label><span>策略</span><select v-model="liveForm.strategy_id" @change="onLiveStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><div v-if="liveParameterFields.length" class="replay-params"><label v-for="field in liveParameterFields" :key="field.key"><span>{{ field.label }}</span><input v-model="liveForm.strategy_parameters[field.key]" type="number" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div><label><span>仓位比例</span><input v-model="liveForm.allocation_ratio" type="number" min="0.01" max="1" step="0.05" /></label><button class="secondary-button" type="button" :disabled="liveSaving" @click="saveLive"><Save v-if="!liveSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ liveSaving ? '保存中' : '保存配置' }}</span></button><button v-if="!liveForm.enabled" class="paper-submit" type="button" :disabled="liveSaving" @click="startLiveStrategy"><Play :size="15" /><span>启动策略</span></button><button v-else class="danger-button" type="button" :disabled="liveSaving" @click="stopLiveStrategy"><Square :size="15" /><span>停止策略</span></button><button class="secondary-button" type="button" :disabled="liveRunning || !liveForm.enabled" @click="runLive"><Play v-if="!liveRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ liveRunning ? '执行中' : '立即执行一次' }}</span></button></div><div v-if="liveResult" class="inline-notice" role="status"><Check :size="14" />{{ liveResult }}</div><div class="live-status" aria-label="实盘模拟状态"><article><span>状态</span><strong :class="liveForm.enabled ? 'positive' : ''">{{ liveForm.enabled ? '运行中' : '已停止' }}</strong></article><article><span>上次执行</span><strong class="follow-time">{{ liveForm.last_tick_at ? formatDate(liveForm.last_tick_at) : '—' }}</strong></article><article><span>上次信号</span><strong>{{ liveForm.last_signal || '—' }}</strong></article><article><span>累计下单</span><strong>{{ liveForm.trade_count }}</strong></article></div><div v-if="liveForm.recent_trades.length" class="order-table-wrap"><table class="order-table"><thead><tr><th>时间</th><th>信号</th><th>方向</th><th>数量</th><th>成交价</th><th>订单</th></tr></thead><tbody><tr v-for="trade in liveForm.recent_trades" :key="trade.order_id || trade.created_at"><td>{{ formatDate(trade.created_at) }}</td><td>{{ trade.signal || '—' }}</td><td :class="trade.side === 'SELL' ? 'negative' : 'positive'">{{ trade.side === 'SELL' ? '卖出' : '买入' }}</td><td>{{ formatNumber(trade.quantity, 6) }}</td><td>{{ trade.filled_price ? formatNumber(trade.filled_price, 2) : '—' }}</td><td class="mono">{{ (trade.order_id || '—').slice(0, 8) }}</td></tr></tbody></table></div><p class="paper-note"><ShieldCheck :size="13" /> 策略启动后独立运行：引擎每 60 秒检查最新已收盘 K 线，有信号自动下单（每根 K 线最多一笔）；只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p></section>
     <section class="paper-metrics" aria-label="模拟盘摘要"><article><span>模拟净值</span><strong>{{ summary ? formatNumber(summary.equity_quote, 2) : '—' }}</strong><em>USDT</em></article><article><span>基础资产</span><strong>{{ positions.length }}</strong><em>有余额的币种</em></article><article><span>已提交订单</span><strong>{{ summary?.order_count ?? 0 }}</strong><em>模拟撮合记录</em></article><article><span>策略回放</span><strong>{{ summary?.strategy_run_count ?? strategyRuns.length }}</strong><em>历史样本运行</em></article><article><span>费率</span><strong>{{ summary?.fee_bps || '10' }}</strong><em>bps</em></article></section>
 
-    <section class="paper-panel strategy-replay-panel" aria-labelledby="paper-strategy-title"><div class="section-heading"><div><p class="kicker">PAPER STRATEGY REPLAY</p><h2 id="paper-strategy-title">模拟策略回放</h2></div><FlaskConical :size="18" class="section-icon" /></div><div class="replay-form"><label><span>历史数据集</span><select v-model="selectedDatasetId"><option v-for="dataset in tradableDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.row_count }} 根</option></select></label><label><span>策略</span><select v-model="strategyId" @change="onStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><div v-if="replayParameterFields.length" class="replay-params"><label v-for="field in replayParameterFields" :key="field.key"><span>{{ field.label }}</span><input v-model="replayParams[field.key]" type="number" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div><button class="paper-submit" type="button" :disabled="strategyRunning || !selectedDataset" @click="runStrategy"><FlaskConical v-if="!strategyRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ strategyRunning ? '回放中' : '运行策略回放' }}</span></button></div><p class="paper-note"><CircleDollarSign :size="13" /> 回放结果只写入模拟研究记录，不改变虚拟账户余额。</p></section>
+    <section class="paper-panel strategy-replay-panel" aria-labelledby="paper-strategy-title"><div class="section-heading"><div><p class="kicker">PAPER STRATEGY REPLAY</p><h2 id="paper-strategy-title">模拟策略回放</h2></div><FlaskConical :size="18" class="section-icon" /></div><div class="replay-form"><label><span>历史数据集</span><select v-model="selectedDatasetId"><option v-for="dataset in tradableDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.row_count }} 根</option></select></label><label><span>策略</span><select v-model="strategyId" @change="onStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label><div v-if="replayParameterFields.length" class="replay-params"><label v-for="field in replayParameterFields" :key="field.key"><span>{{ field.label }}</span><input v-model="replayParams[field.key]" type="number" :min="field.min" :max="field.max" :step="field.type === 'integer' ? 1 : 0.01" /></label></div><label class="replay-check"><input v-model="newsGate" type="checkbox" /><span>新闻门控(风险事件后按建议时长拦截新开仓)</span></label><button class="paper-submit" type="button" :disabled="strategyRunning || !selectedDataset" @click="runStrategy"><FlaskConical v-if="!strategyRunning" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ strategyRunning ? '回放中' : '运行策略回放' }}</span></button></div><p class="paper-note"><CircleDollarSign :size="13" /> 回放结果只写入模拟研究记录，不改变虚拟账户余额。</p></section>
 
     <section class="paper-layout">
       <section class="paper-panel order-panel" aria-labelledby="paper-order-title"><div class="section-heading"><div><p class="kicker">PAPER ORDER</p><h2 id="paper-order-title">提交模拟订单</h2></div><Send :size="18" class="section-icon" /></div><form class="paper-form" @submit.prevent="submitOrder"><label><span>行情数据集</span><select v-model="selectedDatasetId"><option v-for="dataset in tradableDatasets" :key="dataset.dataset_id" :value="dataset.dataset_id">{{ dataset.venue_id.toUpperCase() }} · {{ datasetSymbol(dataset) }} · {{ dataset.row_count }} 根</option></select></label><label><span>方向</span><select v-model="side"><option value="SELL">卖出</option><option value="BUY">买入</option></select></label><label><span>数量</span><input v-model="quantity" type="number" min="0.000001" step="0.000001" required /></label><label><span>限价（留空按 IOC 参考价）</span><input v-model="limitPrice" type="number" min="0" step="0.00000001" placeholder="自动使用尾部收盘附近价格" /></label><button class="paper-submit" type="submit" :disabled="submitting || !selectedDataset"><Send v-if="!submitting" :size="15" /><RefreshCw v-else :size="15" class="spinning" /><span>{{ submitting ? '撮合中' : '提交模拟单' }}</span></button></form><p class="paper-note"><CircleDollarSign :size="13" /> 当前账户：{{ summary?.account_id || 'paper-main' }} · 数据源：已校验历史 K 线</p></section>
@@ -410,7 +522,7 @@ onMounted(loadData);
       </div>
       <div v-else class="empty-state compact"><RefreshCw :size="18" class="spinning" /><p>正在读取账户</p></div>
     </section>
-    <section class="paper-panel strategy-history" aria-labelledby="paper-strategy-history-title"><div class="section-heading"><div><p class="kicker">STRATEGY REPLAY LOG</p><h2 id="paper-strategy-history-title">策略回放记录</h2></div><span class="section-meta">{{ strategyRuns.length }} RUNS</span></div><div class="strategy-run-list"><template v-for="run in strategyRuns" :key="run.run_id"><div class="strategy-run-row" :class="{ expanded: expandedRunId === run.run_id }" @click="toggleRunDetail(run.run_id)" role="button" tabindex="0" @keydown.enter="toggleRunDetail(run.run_id)"><span><strong>{{ run.strategy_id }}</strong><small>{{ run.venue_id?.toUpperCase() }} · {{ run.symbol }} · {{ formatDate(run.created_at) }}</small><small class="run-params">{{ paramSummary(run.parameters?.strategy_parameters) }}</small></span><b :class="Number(run.total_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(run.total_return_pct, 3) }}%</b><em>{{ run.orders }} 笔</em></div><div v-if="expandedRunId === run.run_id" class="strategy-run-detail"><div class="run-stats"><article><span>胜率</span><strong>{{ formatNumber(run.win_rate_pct, 1) }}%</strong></article><article><span>盈利 / 全部</span><strong>{{ run.winning_round_trips }} / {{ run.round_trips }}</strong></article><article><span>最大回撤</span><strong>{{ formatNumber(run.max_drawdown_pct, 2) }}%</strong></article><article><span>手续费</span><strong>{{ formatNumber(run.fees_quote, 4) }}</strong></article><article><span>K 线</span><strong>{{ run.candle_count }}</strong></article><article><span>参数</span><strong class="run-params-full">{{ paramSummary(run.parameters?.strategy_parameters) }}</strong></article></div><div class="equity-block"><div class="result-subhead"><strong>净值曲线</strong><span>{{ formatNumber(run.initial_equity, 2) }} → {{ formatNumber(run.final_equity, 2) }} USDT</span></div><div class="equity-bars" aria-label="净值曲线"><span v-for="point in curveBarsFor(run)" :key="point.timestamp" class="equity-bar" :style="{ height: point.height }" :title="`${formatDate(point.timestamp)} · ${formatNumber(point.equity)} USDT`" /></div></div><div v-if="run.trade_log && run.trade_log.length" class="trade-block"><div class="result-subhead"><strong>成交记录</strong><span>{{ run.trade_log.length }} 条 · 仅显示最近 8 条</span></div><div class="trade-list"><div v-for="trade in run.trade_log.slice(-8).reverse()" :key="`${trade.timestamp}-${trade.side}`" class="trade-row"><span :class="trade.side === 'BUY' ? 'positive' : 'negative'">{{ trade.side === 'BUY' ? '买入' : '卖出' }}</span><span>{{ formatDate(trade.timestamp) }}</span><strong>{{ formatNumber(trade.price) }}</strong><span>{{ formatNumber(trade.quantity, 6) }}</span><small>{{ trade.reason }}</small></div></div></div></div></template><div v-if="!strategyRuns.length" class="table-empty">还没有策略回放记录</div></div></section>
+    <section class="paper-panel strategy-history" aria-labelledby="paper-strategy-history-title"><div class="section-heading"><div><p class="kicker">STRATEGY REPLAY LOG</p><h2 id="paper-strategy-history-title">策略回放记录</h2></div><span class="section-meta">{{ strategyRuns.length }} RUNS</span></div><div class="strategy-run-list"><template v-for="run in strategyRuns" :key="run.run_id"><div class="strategy-run-row" :class="{ expanded: expandedRunId === run.run_id }" @click="toggleRunDetail(run.run_id)" role="button" tabindex="0" @keydown.enter="toggleRunDetail(run.run_id)"><span><strong>{{ run.strategy_id }}</strong><small>{{ run.venue_id?.toUpperCase() }} · {{ run.symbol }} · {{ formatDate(run.created_at) }}</small><small class="run-params">{{ paramSummary(run.parameters?.strategy_parameters) }}</small></span><b :class="Number(run.total_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatNumber(run.total_return_pct, 3) }}%</b><em>{{ run.orders }} 笔</em></div><div v-if="expandedRunId === run.run_id" class="strategy-run-detail"><div class="run-stats"><article><span>胜率</span><strong>{{ formatNumber(run.win_rate_pct, 1) }}%</strong></article><article><span>盈利 / 全部</span><strong>{{ run.winning_round_trips }} / {{ run.round_trips }}</strong></article><article><span>最大回撤</span><strong>{{ formatNumber(run.max_drawdown_pct, 2) }}%</strong></article><article><span>手续费</span><strong>{{ formatNumber(run.fees_quote, 4) }}</strong></article><article><span>K 线</span><strong>{{ run.candle_count }}</strong></article><article><span>新闻门控拦截</span><strong>{{ run.news_blocked_entries ?? 0 }} 次</strong></article><article><span>参数</span><strong class="run-params-full">{{ paramSummary(run.parameters?.strategy_parameters) }}</strong></article></div><div class="equity-block"><div class="result-subhead"><strong>净值曲线</strong><span>{{ formatNumber(run.initial_equity, 2) }} → {{ formatNumber(run.final_equity, 2) }} USDT</span></div><div class="equity-bars" aria-label="净值曲线"><span v-for="point in curveBarsFor(run)" :key="point.timestamp" class="equity-bar" :style="{ height: point.height }" :title="`${formatDate(point.timestamp)} · ${formatNumber(point.equity)} USDT`" /></div></div><div v-if="run.trade_log && run.trade_log.length" class="trade-block"><div class="result-subhead"><strong>成交记录</strong><span>{{ run.trade_log.length }} 条 · 仅显示最近 8 条</span></div><div class="trade-list"><div v-for="trade in run.trade_log.slice(-8).reverse()" :key="`${trade.timestamp}-${trade.side}`" class="trade-row"><span :class="trade.side === 'BUY' ? 'positive' : 'negative'">{{ trade.side === 'BUY' ? '买入' : '卖出' }}</span><span>{{ formatDate(trade.timestamp) }}</span><strong>{{ formatNumber(trade.price) }}</strong><span>{{ formatNumber(trade.quantity, 6) }}</span><small>{{ trade.reason }}</small></div></div></div></div></template><div v-if="!strategyRuns.length" class="table-empty">还没有策略回放记录</div></div></section>
   </section>
 </template>
 
@@ -436,6 +548,7 @@ onMounted(loadData);
 .automation-form input, .automation-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .automation-form input:focus, .automation-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .automation-check { display: inline-flex !important; align-items: center; gap: 7px !important; min-height: 37px; white-space: nowrap; }
+.replay-check { display: inline-flex !important; align-items: center; gap: 7px !important; min-height: 37px; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .automation-check input { width: 16px; min-height: 16px; accent-color: var(--cyan); }
 .follow-panel { display: grid; gap: 15px; }
 .follow-form { grid-template-columns: minmax(150px, .9fr) minmax(130px, .7fr) minmax(130px, .7fr) minmax(140px, .7fr) auto auto auto; }
@@ -446,6 +559,11 @@ onMounted(loadData);
 .follow-time { font-size: 12px !important; font-weight: 500 !important; color: var(--muted); }
 .follow-alert { color: var(--red); font-size: 12px !important; }
 .follow-ok { color: var(--up); font-size: 12px !important; }
+.live-status { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; padding: 12px 14px; border: 1px solid var(--line-bright); border-radius: 6px; background: var(--panel-soft); }
+.live-status article { display: grid; gap: 5px; }
+.live-status span { color: var(--muted); font-size: 11px; }
+.live-status strong { font-size: 15px; font-weight: 650; }
+.mono { font-family: Consolas, monospace; font-size: 11px; }
 @media (max-width: 1050px) { .follow-form { grid-template-columns: 1fr 1fr; } .follow-latest { grid-template-columns: repeat(3, 1fr); } }
 .strategy-replay-panel { display: grid; gap: 15px; }
 .replay-form { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(180px, .8fr) auto; gap: 12px; align-items: end; }
@@ -482,6 +600,9 @@ onMounted(loadData);
 .paper-submit { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 39px; border: 1px solid var(--cyan); border-radius: 5px; color: #11201e; background: var(--cyan); font-size: 12px; font-weight: 720; }
 .paper-submit:hover:not(:disabled) { background: #94f0df; }
 .paper-submit:disabled { opacity: .55; cursor: not-allowed; }
+.danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 39px; border: 1px solid #f0433a; border-radius: 5px; color: #fff; background: #f0433a; font-size: 12px; font-weight: 720; }
+.danger-button:hover:not(:disabled) { background: #d63a32; }
+.danger-button:disabled { opacity: .55; cursor: not-allowed; }
 .paper-note { display: flex; align-items: start; gap: 7px; margin: 16px 0 0; color: var(--dim); font-size: 10px; line-height: 1.6; }
 .paper-note svg { flex: 0 0 auto; color: var(--amber); }
 .secondary-button { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 7px 10px; color: var(--muted); background: transparent; font-size: 10px; }

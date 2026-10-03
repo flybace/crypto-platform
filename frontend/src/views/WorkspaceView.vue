@@ -202,7 +202,7 @@ onMounted(loadOverview);
          <AccountCenter v-else-if="activeSection === 'account'" />
          <StrategyCenter v-else-if="activeSection === 'strategies'" @open-backtest="activeSection = 'backtests'" />
          <ResearchCenter v-else-if="activeSection === 'research'" />
-         <NewsCenter v-else-if="activeSection === 'news'" />
+         <NewsCenter v-else-if="activeSection === 'news'" @go-assistant="activeSection = 'assistant'" />
          <AdviceCenter v-else-if="activeSection === 'advice'" />
          <BacktestCenter v-else-if="activeSection === 'backtests'" />
          <PoolCenter v-else-if="activeSection === 'pools'" />

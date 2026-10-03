@@ -722,6 +722,7 @@ class TaskWorker:
                 config=self._config(payload, self._text(payload, "strategy_id")),
                 run_id=self._text(payload, "run_id"),
                 record_task=False,
+                news_events=tuple(payload.get("news_events", ()) or ()),
             )
         if kind == "paper_automation":
             config = payload.get("config")
@@ -1008,6 +1009,8 @@ class TaskWorker:
             allocation_ratio=cls._decimal(raw, "allocation_ratio"),
             momentum_threshold_pct=cls._decimal(raw, "momentum_threshold_pct"),
             parameters=dict(parameters),
+            news_gate=bool(raw.get("news_gate", False)),
+            news_block_hours=int(raw.get("news_block_hours", 48)),
         )
 
     @staticmethod

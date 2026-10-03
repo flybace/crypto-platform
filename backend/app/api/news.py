@@ -104,3 +104,35 @@ def resonance(
         return _service(request).resonance(interval=interval, limit=limit)
     except NewsError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@router.get("/advice")
+def advice(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    hours: int = Query(default=72, ge=1, le=720),
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    """机器可读的策略建议:重大新闻事件 -> 按品种的行动建议。"""
+    return {"items": _service(request).advice(limit=limit, hours=hours)}
+
+
+@router.get("/ranking")
+def ranking(
+    request: Request,
+    hours: int = Query(default=72, ge=1, le=720),
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    """消息面选币榜:按品种聚合近期新闻关注度与情绪方向。"""
+    return {"items": _service(request).ranking(hours=hours)}
+
+
+@router.post("/ingest/run", status_code=status.HTTP_201_CREATED)
+def run_ingest(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    """手动触发一次 RSS 抓取(分析+入库+重大事件识别)。"""
+    from backend.app.services.news_ingest import NewsIngestor
+
+    try:
+        return NewsIngestor(_service(request)).ingest_once()
+    except NewsError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error

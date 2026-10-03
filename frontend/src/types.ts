@@ -600,6 +600,37 @@ export type StrategyMatrixSummary = {
   items: StrategyMatrix[];
 };
 
+export type NewsAdvice = {
+  symbol: string;
+  action: string;
+  action_text: string;
+  urgency: string;
+  urgency_text: string;
+  suggested_duration_hours: number;
+  position_guidance: string;
+  strategy_notes: Record<string, string>;
+  reason: string;
+  evidence: string[];
+  impact_score: number;
+  heat: number;
+  published_at: string;
+  title: string;
+  topics: string[];
+  sentiment: string;
+  sources: string[];
+};
+
+export type NewsRankingItem = {
+  symbol: string;
+  score: number;
+  direction: 'positive' | 'neutral' | 'risk' | string;
+  heat: number;
+  positive: number;
+  risk: number;
+  top_title: string;
+  top_impact: number;
+};
+
 export type NewsEvent = {
   event_id: string;
   event_key: string;
@@ -725,6 +756,33 @@ export type PaperAutomation = {
   strategy_parameters: Record<string, string | number | null>;
   last_run_id: string | null;
   updated_at: string | null;
+};
+
+export type PaperLiveTrade = {
+  candle_time: string;
+  signal: string | null;
+  side: string;
+  quantity: string;
+  order_id: string | null;
+  filled_price: string;
+  created_at: string;
+};
+
+export type PaperLiveConfig = {
+  enabled: boolean;
+  venue_id: string;
+  symbol: string;
+  interval: string;
+  strategy_id: string;
+  strategy_parameters: Record<string, string | number | null>;
+  allocation_ratio: string;
+  last_candle_time: string | null;
+  last_signal: string | null;
+  last_tick_at: string | null;
+  last_order_id: string | null;
+  trade_count: number;
+  updated_at: string | null;
+  recent_trades: PaperLiveTrade[];
 };
 
 export type PaperFollowConfig = {

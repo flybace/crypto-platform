@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any, Iterable, Mapping
 
@@ -163,6 +164,8 @@ class CandleBacktestConfig:
     allocation_ratio: Decimal = Decimal("1")
     momentum_threshold_pct: Decimal = Decimal("0.02")
     parameters: Mapping[str, Any] = field(default_factory=dict)
+    news_gate: bool = False
+    news_block_hours: int = 48
 
     def __post_init__(self) -> None:
         strategy_id = str(self.strategy_id).strip().lower()
@@ -186,6 +189,10 @@ class CandleBacktestConfig:
             raise ValueError("momentum_threshold_pct must not be negative")
         if not isinstance(self.parameters, Mapping):
             raise ValueError("parameters must be an object")
+        news_gate = bool(self.news_gate)
+        news_block_hours = int(self.news_block_hours)
+        if news_block_hours < 0 or news_block_hours > 24 * 30:
+            raise ValueError("news_block_hours must be between 0 and 720")
         normalized_parameters = {str(key).strip(): value for key, value in self.parameters.items() if str(key).strip()}
         if len(normalized_parameters) > 40:
             raise ValueError("parameters contains too many entries")
@@ -197,6 +204,8 @@ class CandleBacktestConfig:
         object.__setattr__(self, "allocation_ratio", allocation_ratio)
         object.__setattr__(self, "momentum_threshold_pct", threshold)
         object.__setattr__(self, "parameters", normalized_parameters)
+        object.__setattr__(self, "news_gate", news_gate)
+        object.__setattr__(self, "news_block_hours", news_block_hours)
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +230,7 @@ class CandleBacktestResult:
     win_rate_pct: Decimal
     equity_curve: tuple[dict[str, str], ...]
     trade_log: tuple[dict[str, str], ...]
+    news_blocked_entries: int = 0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -244,7 +254,52 @@ class CandleBacktestResult:
             "win_rate_pct": str(self.win_rate_pct),
             "equity_curve": list(self.equity_curve),
             "trade_log": list(self.trade_log),
+            "news_blocked_entries": self.news_blocked_entries,
         }
+
+
+def _parse_news_time(value: object) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _news_block_windows(
+    news_events: Iterable[Mapping[str, Any]], *, block_hours: int
+) -> tuple[tuple[datetime, datetime], ...]:
+    """Build (start, end) block windows from risk news events.
+
+    A window starts at the event's ``published_at`` (never before it, so the
+    replay cannot peek into the future) and lasts the event's
+    ``suggested_duration_hours`` when present, else ``block_hours``.
+    """
+    windows: list[tuple[datetime, datetime]] = []
+    for event in news_events:
+        sentiment = str(event.get("sentiment", "")).strip().lower()
+        risk_level = str(event.get("risk_level", "")).strip().lower()
+        if sentiment != "risk" and risk_level != "high":
+            continue
+        published = _parse_news_time(event.get("published_at"))
+        if published is None:
+            continue
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+        try:
+            duration = int(event.get("suggested_duration_hours") or block_hours)
+        except (TypeError, ValueError):
+            duration = block_hours
+        duration = max(1, min(duration, 24 * 30))
+        windows.append((published, published + timedelta(hours=duration)))
+    return tuple(windows)
+
+
+def _news_blocked(moment: datetime, windows: tuple[tuple[datetime, datetime], ...]) -> bool:
+    if not windows:
+        return False
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return any(start <= moment <= end for start, end in windows)
 
 
 class CandleBacktestEngine:
@@ -257,9 +312,12 @@ class CandleBacktestEngine:
         config: CandleBacktestConfig,
         run_id: str,
         dataset_id: str,
+        news_events: Iterable[Mapping[str, Any]] = (),
     ) -> CandleBacktestResult:
         rows = tuple(candles)
         self._validate_rows(rows, config)
+        block_windows = _news_block_windows(news_events, block_hours=config.news_block_hours) \
+            if config.news_gate else ()
         first = rows[0]
         last = rows[-1]
         initial_equity = config.initial_quote + config.initial_base * first.open
@@ -274,6 +332,7 @@ class CandleBacktestEngine:
         filled_orders = 0
         round_trips = 0
         winning_round_trips = 0
+        news_blocked_entries = 0
         trade_log: list[dict[str, str]] = []
         equity_points: list[tuple[str, Decimal]] = []
         signals = self._signal_series(rows, config)
@@ -362,7 +421,10 @@ class CandleBacktestEngine:
             if index == len(rows) - 1 and base > 0:
                 execute_sell(candle, candle.close, "end_of_data")
             elif signal == "BUY" and base <= 0:
-                pending = ("BUY", f"{config.strategy_id}:entry")
+                if _news_blocked(candle.close_time, block_windows):
+                    news_blocked_entries += 1
+                else:
+                    pending = ("BUY", f"{config.strategy_id}:entry")
             elif signal == "SELL" and base > 0:
                 pending = ("SELL", f"{config.strategy_id}:exit")
 
@@ -397,6 +459,7 @@ class CandleBacktestEngine:
             win_rate_pct=win_rate,
             equity_curve=self._compact_curve(equity_points),
             trade_log=tuple(trade_log[-40:]),
+            news_blocked_entries=news_blocked_entries,
         )
 
     @classmethod

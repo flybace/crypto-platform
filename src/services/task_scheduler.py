@@ -20,6 +20,8 @@ from backend.app.services.history_service import build_history_service
 from backend.app.services.domain_state import build_domain_state, build_runtime_state
 from backend.app.services.history_scheduler_state import HistorySchedulerState
 from backend.app.services.history_sync import DEFAULT_INTERVALS, DEFAULT_SYMBOLS, DEFAULT_VENUES, HistorySyncService
+from backend.app.services.news import NewsService
+from backend.app.services.news_ingest import NewsIngestor
 from backend.app.services.paper_automation import PaperAutomationService
 from backend.app.services.paper_follow import PaperFollowService
 from backend.app.services.paper_trading import PaperTradingService
@@ -120,6 +122,13 @@ class HistoryScheduler:
         self.paper_follow = PaperFollowService(
             state_path=history_root / ".runtime" / "paper-follow.json",
         )
+        # News intelligence: RSS ingestion on a fixed interval. The ingestor
+        # never raises into the tick; failures are logged and retried later.
+        self.news_service = NewsService(
+            self.service.storage,
+            state_store=domain_state("news.json"),
+        )
+        self.news_ingestor = NewsIngestor(self.news_service)
 
     def run_once(self) -> dict[str, object]:
         if self.shutdown_requested:
@@ -136,6 +145,9 @@ class HistoryScheduler:
             follow = self._maybe_dispatch_paper_follow(now, result)
             if follow is not None:
                 result["paper_follow"] = follow
+            news = self._maybe_ingest_news(now)
+            if news is not None:
+                result["news_ingest"] = news
         except Exception as error:
             LOGGER.exception("automatic history sync tick failed")
             result = self._record_error(now, error)
@@ -209,6 +221,33 @@ class HistoryScheduler:
         except Exception as error:
             LOGGER.warning("paper follow dispatch failed: %s", error)
             return {"status": "dispatch_failed", "error": str(error)}
+
+    def _maybe_ingest_news(self, now: datetime) -> dict[str, object] | None:
+        """Run the RSS news ingestor when its interval has elapsed.
+
+        Runs inline in the scheduler process (a few seconds of network I/O);
+        any failure is logged and the tick continues unaffected.
+        """
+        try:
+            if not self.news_ingestor.should_run(now):
+                return None
+            outcome = self.news_ingestor.ingest_once()
+            majors = outcome.get("major_events", [])
+            if majors:
+                LOGGER.warning(
+                    "news ingest: %d major event(s): %s",
+                    len(majors),
+                    "; ".join(str(item.get("title", ""))[:60] for item in majors[:3]),
+                )
+            else:
+                LOGGER.info(
+                    "news ingest: ingested=%s skipped=%s",
+                    outcome.get("ingested"), outcome.get("skipped"),
+                )
+            return {"status": "completed", **outcome}
+        except Exception as error:
+            LOGGER.warning("news ingest failed: %s", error)
+            return {"status": "failed", "error": str(error)}
 
     def _run_once(self, now: datetime) -> dict[str, object]:
         self._refresh_public_network_settings()
