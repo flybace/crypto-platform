@@ -727,6 +727,47 @@ export type PaperAutomation = {
   updated_at: string | null;
 };
 
+export type PaperFollowConfig = {
+  enabled: boolean;
+  interval_seconds: number;
+  alert_min_return_pct: string;
+  alert_max_drawdown_pct: string;
+  alert_underperform_pct: string;
+  last_follow_at: string | null;
+  last_dispatched_at: string | null;
+  last_follow_run_id: string | null;
+  updated_at: string | null;
+};
+
+export type PaperFollowSnapshot = {
+  at: string;
+  run_id: string;
+  strategy_run_id: string;
+  benchmark_run_id: string;
+  strategy_id: string;
+  venue_id: string;
+  symbol: string;
+  interval: string;
+  dataset_id: string;
+  start_at: string;
+  end_at: string;
+  candle_count: number;
+  strategy_return_pct: string;
+  market_return_pct: string;
+  excess_return_pct: string;
+  max_drawdown_pct: string;
+  orders: number;
+  win_rate_pct: string;
+  alerts: string[];
+  strategy_parameters?: Record<string, string | number | null>;
+};
+
+export type PaperFollowState = {
+  config: PaperFollowConfig;
+  snapshots: PaperFollowSnapshot[];
+  latest: PaperFollowSnapshot | null;
+};
+
 export type PoolMember = {
   dataset_id: string;
   venue_id: string;

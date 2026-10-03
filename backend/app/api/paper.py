@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
@@ -13,6 +14,7 @@ from application.candle_backtest import CandleBacktestConfig
 from application.history_storage import HistoryStorageError
 
 from ..auth.dependencies import require_user
+from ..services.paper_follow import PaperFollowService, execute_paper_follow
 from ..services.task_dispatcher import TaskDispatchError, TaskDispatcher
 
 
@@ -96,8 +98,80 @@ class PaperAutomationRequest(BaseModel):
         return self
 
 
+class PaperFollowRequest(BaseModel):
+    enabled: bool = False
+    interval_seconds: int = Field(default=86400, ge=3600, le=604800)
+    alert_min_return_pct: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    alert_max_drawdown_pct: Decimal = Field(default=Decimal("20"), ge=0, le=100)
+    alert_underperform_pct: Decimal = Field(default=Decimal("5"), ge=0, le=100)
+
+    @field_validator("alert_min_return_pct", "alert_max_drawdown_pct", "alert_underperform_pct", mode="before")
+    @classmethod
+    def finite_decimal(cls, value):
+        return _decimal(value)
+
+
 def _service(request: Request):
     return request.app.state.paper_trading
+
+
+@router.get("/follow")
+def follow(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    service: PaperFollowService = request.app.state.paper_follow
+    return service.get()
+
+
+@router.put("/follow")
+def update_follow(
+    payload: PaperFollowRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    service: PaperFollowService = request.app.state.paper_follow
+    try:
+        return service.update(payload.model_dump(mode="json"))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/follow/run", status_code=status.HTTP_201_CREATED)
+def run_follow(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    follow_service: PaperFollowService = request.app.state.paper_follow
+    config = follow_service.get()["config"]
+    automation = request.app.state.paper_automation.get()
+    if not config.get("enabled"):
+        raise HTTPException(status_code=422, detail="paper follow is disabled")
+    if not automation.get("enabled"):
+        raise HTTPException(status_code=422, detail="paper automation is disabled")
+    dispatcher = request.app.state.task_dispatcher
+    if dispatcher.enabled:
+        try:
+            request.app.state.strategy_registry.assert_enabled(
+                str(automation.get("strategy_id", "")), "paper"
+            )
+            run_id = dispatcher.run_id()
+            queued = dispatcher.dispatch(
+                "paper_follow",
+                "模拟盘自动跟盯",
+                {"run_id": run_id},
+                task_id=TaskDispatcher.task_id("paper_follow", run_id),
+            )
+        except (ValueError, KeyError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except TaskDispatchError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=queued)
+    try:
+        snapshot = execute_paper_follow(
+            paper_automation=request.app.state.paper_automation,
+            paper_trading=request.app.state.paper_trading,
+            strategy_registry=request.app.state.strategy_registry,
+            follow_service=follow_service,
+            run_id=f"paper-follow-{uuid4().hex}",
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"snapshot": snapshot}
 
 
 @router.get("/summary")

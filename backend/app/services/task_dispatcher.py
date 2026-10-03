@@ -24,6 +24,7 @@ TASK_KINDS = frozenset(
         "research",
         "paper_strategy",
         "paper_automation",
+        "paper_follow",
         "strategy_matrix",
         "parameter_tune",
     }
@@ -36,6 +37,7 @@ TASK_PREFIXES = {
     "research": "research",
     "paper_strategy": "paper-strategy",
     "paper_automation": "paper-automation",
+    "paper_follow": "paper-follow",
     "strategy_matrix": "strategy-matrix",
     "parameter_tune": "parameter-tune",
 }

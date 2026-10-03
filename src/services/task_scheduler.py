@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime, timedelta
 import logging
+import uuid
 from pathlib import Path
 import threading
 
@@ -16,9 +17,13 @@ from application.history_archive import ParquetHistoryArchive
 from backend.app.services.history_jobs import HistoryJobManager
 from backend.app.services.history_metadata import HistoryMetadataRepository
 from backend.app.services.history_service import build_history_service
-from backend.app.services.domain_state import build_runtime_state
+from backend.app.services.domain_state import build_domain_state, build_runtime_state
 from backend.app.services.history_scheduler_state import HistorySchedulerState
 from backend.app.services.history_sync import DEFAULT_INTERVALS, DEFAULT_SYMBOLS, DEFAULT_VENUES, HistorySyncService
+from backend.app.services.paper_automation import PaperAutomationService
+from backend.app.services.paper_follow import PaperFollowService
+from backend.app.services.paper_trading import PaperTradingService
+from backend.app.services.strategy_registry import StrategyRegistry
 from backend.app.services.task_queue import RedisTaskQueue
 from backend.app.services.task_store import TaskStore
 from backend.app.services.task_log_archive import TaskLogArchive
@@ -98,6 +103,23 @@ class HistoryScheduler:
                 "history-scheduler.json",
             ),
         )
+        # Paper-follow automation: reuse the same runtime state root as the
+        # worker and backend so all processes observe the same configuration.
+        domain_state = lambda name: build_domain_state(self.store, history_root / ".runtime", name)
+        self.strategy_registry = StrategyRegistry(state_store=domain_state("strategies.json"))
+        self.paper_trading = PaperTradingService(
+            self.service.storage,
+            state_store=domain_state("paper-trading.json"),
+            task_store=self.store,
+        )
+        self.paper_automation = PaperAutomationService(
+            self.paper_trading,
+            self.strategy_registry,
+            state_store=domain_state("paper-automation.json"),
+        )
+        self.paper_follow = PaperFollowService(
+            state_path=history_root / ".runtime" / "paper-follow.json",
+        )
 
     def run_once(self) -> dict[str, object]:
         if self.shutdown_requested:
@@ -111,6 +133,9 @@ class HistoryScheduler:
                 last_error=None,
             )
             result = self._run_once(now)
+            follow = self._maybe_dispatch_paper_follow(now, result)
+            if follow is not None:
+                result["paper_follow"] = follow
         except Exception as error:
             LOGGER.exception("automatic history sync tick failed")
             result = self._record_error(now, error)
@@ -157,6 +182,33 @@ class HistoryScheduler:
     def _history_root(self) -> Path:
         path = Path(self.settings.history_data_path)
         return path if path.is_absolute() else PROJECT_ROOT / path
+
+    def _maybe_dispatch_paper_follow(
+        self, now: datetime, result: dict[str, object]
+    ) -> dict[str, object] | None:
+        """Enqueue a paper_follow task when the follow profile is due.
+
+        Only fires after a successful history tick (data is up to date) and
+        when both the automation profile and the follow profile are enabled.
+        Replay-only: the worker runs strategy + benchmark replays, never orders.
+        """
+        try:
+            if str(result.get("status", "")).strip().lower() != "up_to_date":
+                return None
+            automation = self.paper_automation.get()
+            if not automation.get("enabled"):
+                return None
+            if not self.paper_follow.should_run(now):
+                return None
+            run_id = uuid.uuid4().hex
+            task_id = f"paper-follow:{run_id}"
+            self.queue.enqueue(task_id, "paper_follow", {"run_id": run_id})
+            self.paper_follow.mark_dispatched()
+            LOGGER.info("paper follow dispatched task_id=%s", task_id)
+            return {"status": "dispatched", "task_id": task_id, "run_id": run_id}
+        except Exception as error:
+            LOGGER.warning("paper follow dispatch failed: %s", error)
+            return {"status": "dispatch_failed", "error": str(error)}
 
     def _run_once(self, now: datetime) -> dict[str, object]:
         self._refresh_public_network_settings()
