@@ -394,17 +394,40 @@ def create_app(
     app.state.paper_follow = PaperFollowService(
         state_path=runtime_state_root / "paper-follow.json",
     )
-    app.state.paper_live = PaperLiveService(
-        paper_trading,
-        strategy_registry,
-        runtime_history_service.storage,
-        state_store=domain_state("paper-live.json"),
+    from .services.paper_live import PaperLiveManager
+
+    def _paper_factory(instance_id: str) -> PaperTradingService:
+        """每个策略实例独立模拟账户。"""
+        return PaperTradingService(
+            runtime_history_service.storage,
+            state_store=domain_state(f"paper-trading-{instance_id}.json"),
+            task_store=task_store,
+        )
+
+    paper_live_manager = PaperLiveManager(
+        strategies=strategy_registry,
+        storage=runtime_history_service.storage,
+        state_store=domain_state("paper-live-manager.json"),
+        paper_factory=_paper_factory,
     )
-    paper_live_service = app.state.paper_live
+    # 迁移旧单实例：首次运行时把 paper-live.json 导入为默认实例
+    if not paper_live_manager.list_instances():
+        try:
+            legacy = domain_state("paper-live.json")
+            payload = legacy.load({"version": 1, "live": {}})
+            live_config = payload.get("live", {}) if isinstance(payload, dict) else {}
+            if live_config:
+                paper_live_manager.create_instance(live_config)
+                paper_live_logger = logging.getLogger("crypto.paper_live")
+                paper_live_logger.info("migrated legacy paper-live.json to manager")
+        except Exception:
+            pass
+    app.state.paper_live_manager = paper_live_manager
+    # 兼容旧 API：app.state.paper_live 指向 manager（API 已更新为多实例）
     paper_live_logger = logging.getLogger("crypto.paper_live")
 
     async def _paper_live_engine() -> None:
-        """策略引擎：策略启动后独立运行，每 60 秒检查一次。
+        """策略引擎：所有已启动的策略实例独立运行，每 60 秒各检查一次。
 
         不依赖历史同步调度器——策略有自己的运行循环：
         启动策略 → 每轮读最新已收盘 K 线 → 有信号就自动下单（模拟）。
@@ -412,10 +435,11 @@ def create_app(
         """
         while True:
             try:
-                outcome = await asyncio.to_thread(paper_live_service.tick)
-                status = outcome.get("status") if isinstance(outcome, dict) else "?"
-                if status not in {"disabled", "no_new_candle"}:
-                    paper_live_logger.info("paper live tick: %s", outcome)
+                outcomes = await asyncio.to_thread(paper_live_manager.tick_all)
+                for outcome in outcomes:
+                    status = outcome.get("status") if isinstance(outcome, dict) else "?"
+                    if status not in {"disabled", "no_new_candle"}:
+                        paper_live_logger.info("paper live tick: %s", outcome)
             except asyncio.CancelledError:
                 raise
             except Exception as error:  # 引擎永不崩溃，报错只记日志

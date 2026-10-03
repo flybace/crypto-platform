@@ -3333,3 +3333,21 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 4. 绩效看板：收益曲线、回撤统计
 5. 真实账户只读验证（等用户 Key）
 - M6 真实下单：用户明确暂不做。
+
+### 31.45 2026-10-04 多策略多品种：PaperLiveManager
+
+背景：§31.44 优先级 #3。原来只有一个策略实例（OKX BTC/USDT 1h），用户要同时跑多个策略/品种。
+
+实现（分支 `codex/paper-multi`）：
+- 新增 `PaperLiveManager`（backend/app/services/paper_live.py）：管理多个独立策略实例。
+- 每个实例 = 独立 `PaperLiveService` + 独立 `PaperTradingService`（独立模拟账户、独立 state 文件），互不干扰。
+- 引擎每 60 秒调用 `manager.tick_all()`，轮询所有已启用的实例。
+- API：`GET /paper/live` 返回 `{instances: [...]}`；新增 `POST /paper/live/instances`（创建）、`PUT /paper/live/instances/{id}`（更新，支持 exclude_unset 部分更新）、`DELETE /paper/live/instances/{id}`（删除）、`POST /paper/live/instances/{id}/run`（手动执行）。旧单实例 `PUT /paper/live` 保留兼容，操作第一个实例。
+- 迁移：首次启动时自动把旧 `paper-live.json` 导入为默认实例，用户现有策略配置不丢失。
+- 前端：实盘模拟板块改为实例列表（市场/品种/周期/策略/状态/上次执行/信号/下单/风控/操作），"添加策略"按钮弹出编辑器，支持启动/停止/执行/编辑/删除。
+
+验证：
+- 30 个 paper_live 单元测试通过（含 5 个 Manager 新测试：创建/列表/更新/删除/隔离性）。
+- 全量 346 passed。
+- 真机 API：旧实例自动迁移（OKX BTC/USDT 1h macd_reversal，enabled=True）；创建第二个实例（Binance ETH/USDT sma_cross）成功；删除后恢复 1 个。
+- 前端构建通过。

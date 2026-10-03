@@ -200,6 +200,12 @@ class PaperLiveService:
                 "recent_trades": deepcopy(self._trades[-10:][::-1]),
             }
 
+    def get_config(self) -> dict[str, Any]:
+        """返回纯配置（不含 recent_trades），用于 Manager 持久化实例列表。"""
+        self._refresh_external()
+        with self._lock:
+            return deepcopy(self._config)
+
     def update(self, values: dict[str, Any]) -> dict[str, Any]:
         self._refresh_external()
         with self._lock:
@@ -469,3 +475,120 @@ class PaperLiveService:
         if current_mtime and current_mtime != self._state_mtime_ns:
             with self._lock:
                 self._load()
+
+
+class PaperLiveManager:
+    """管理多个独立策略实例。每个实例有独立的配置、状态和模拟账户。"""
+
+    def __init__(
+        self,
+        *,
+        strategies: StrategyRegistry,
+        storage: HistoryStorage,
+        state_store: StateStore | None = None,
+        paper_factory=None,
+    ) -> None:
+        self._strategies = strategies
+        self._storage = storage
+        self._state = state_store
+        self._paper_factory = paper_factory  # (instance_id) -> PaperTradingService
+        self._instances: dict[str, PaperLiveService] = {}
+        self._lock = RLock()
+        self._load()
+
+    def _instance_state_store(self, instance_id: str) -> StateStore | None:
+        if self._state is None or not hasattr(self._state, "path"):
+            return None
+        # 从 manager 的 state 路径派生实例路径
+        base = self._state.path
+        return JsonStateStore(str(base).replace("paper-live-manager.json", f"paper-live-{instance_id}.json"))
+
+    def _load(self) -> None:
+        if self._state is None:
+            return
+        try:
+            payload = self._state.load({"version": 1, "instances": {}})
+        except JsonStateError:
+            payload = {"version": 1, "instances": {}}
+        instances = payload.get("instances", {}) if isinstance(payload, dict) else {}
+        with self._lock:
+            for instance_id, config in instances.items():
+                self._instances[instance_id] = self._build_instance(instance_id, config)
+
+    def _persist_locked(self) -> None:
+        if self._state is None:
+            return
+        try:
+            self._state.save({
+                "version": 1,
+                "instances": {iid: svc.get_config() for iid, svc in self._instances.items()},
+            })
+        except JsonStateError as error:
+            raise RuntimeError("paper live manager state cannot be saved") from error
+
+    def _build_instance(self, instance_id: str, config: dict | None = None) -> PaperLiveService:
+        paper = self._paper_factory(instance_id) if self._paper_factory else None
+        svc = PaperLiveService(
+            paper,
+            self._strategies,
+            self._storage,
+            state_store=self._instance_state_store(instance_id),
+        )
+        if config:
+            # 恢复已保存的配置（不触发校验失败就跳过）
+            try:
+                svc.update({k: v for k, v in config.items() if k in DEFAULT_LIVE})
+            except ValueError:
+                pass
+        return svc
+
+    def list_instances(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [
+                {"instance_id": iid, **svc.get()}
+                for iid, svc in sorted(self._instances.items())
+            ]
+
+    def create_instance(self, values: dict[str, Any]) -> dict[str, Any]:
+        import uuid
+        instance_id = f"live-{uuid.uuid4().hex[:8]}"
+        with self._lock:
+            svc = self._build_instance(instance_id)
+            # 应用用户配置
+            svc.update(values)
+            self._instances[instance_id] = svc
+            self._persist_locked()
+            return {"instance_id": instance_id, **svc.get()}
+
+    def update_instance(self, instance_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            svc = self._instances.get(instance_id)
+            if svc is None:
+                raise KeyError(f"instance not found: {instance_id}")
+            result = svc.update(values)
+            self._persist_locked()
+            return {"instance_id": instance_id, **result}
+
+    def delete_instance(self, instance_id: str) -> None:
+        with self._lock:
+            if instance_id not in self._instances:
+                raise KeyError(f"instance not found: {instance_id}")
+            del self._instances[instance_id]
+            self._persist_locked()
+
+    def get_instance(self, instance_id: str) -> PaperLiveService | None:
+        with self._lock:
+            return self._instances.get(instance_id)
+
+    def tick_all(self) -> list[dict[str, Any]]:
+        """对所有启用的实例各跑一轮。引擎每 60 秒调用一次。"""
+        results = []
+        with self._lock:
+            instances = list(self._instances.items())
+        for instance_id, svc in instances:
+            try:
+                outcome = svc.tick()
+                results.append({"instance_id": instance_id, **outcome})
+            except Exception as error:
+                results.append({"instance_id": instance_id, "status": "tick_failed", "error": str(error)})
+        return results

@@ -382,3 +382,64 @@ class TestCheckRisk:
         )
         assert decision is not None
         assert decision["quantity"] == pytest.approx(Decimal("0.1"))
+
+
+class TestPaperLiveManager:
+    def _make_manager(self, tmp_path):
+        from backend.app.services.paper_live import PaperLiveManager
+        from backend.app.services.paper_trading import PaperTradingService
+        from adapters.standalone.state_store import JsonStateStore
+        strategies = _FakeStrategies()
+        storage = _FakeStorage(_candles(60))
+        def paper_factory(instance_id):
+            return PaperTradingService(
+                storage,
+                state_store=JsonStateStore(str(tmp_path / f"paper-trading-{instance_id}.json")),
+            )
+        return PaperLiveManager(
+            strategies=strategies,
+            storage=storage,
+            state_store=JsonStateStore(str(tmp_path / "paper-live-manager.json")),
+            paper_factory=paper_factory,
+        )
+
+    def test_create_and_list(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        assert mgr.list_instances() == []
+        inst = mgr.create_instance({"venue_id": "okx", "symbol": "BTC/USDT", "enabled": False})
+        assert inst["instance_id"].startswith("live-")
+        assert inst["venue_id"] == "okx"
+        assert len(mgr.list_instances()) == 1
+
+    def test_update_and_delete(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        inst = mgr.create_instance({"venue_id": "okx", "symbol": "BTC/USDT"})
+        iid = inst["instance_id"]
+        updated = mgr.update_instance(iid, {"enabled": True, "symbol": "ETH/USDT"})
+        assert updated["enabled"] is True
+        assert updated["symbol"] == "ETH/USDT"
+        mgr.delete_instance(iid)
+        assert mgr.list_instances() == []
+
+    def test_update_nonexistent_raises(self, tmp_path):
+        import pytest
+        mgr = self._make_manager(tmp_path)
+        with pytest.raises(KeyError):
+            mgr.update_instance("live-nope", {"enabled": True})
+
+    def test_tick_all_skips_disabled(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        mgr.create_instance({"venue_id": "okx", "symbol": "BTC/USDT", "enabled": False})
+        results = mgr.tick_all()
+        assert len(results) == 1
+        assert results[0]["status"] == "disabled"
+
+    def test_instances_isolated(self, tmp_path):
+        mgr = self._make_manager(tmp_path)
+        a = mgr.create_instance({"venue_id": "okx", "symbol": "BTC/USDT", "enabled": True})
+        b = mgr.create_instance({"venue_id": "okx", "symbol": "ETH/USDT", "enabled": True})
+        # 两个实例各自独立
+        svc_a = mgr.get_instance(a["instance_id"])
+        svc_b = mgr.get_instance(b["instance_id"])
+        assert svc_a is not svc_b
+        assert svc_a._paper is not svc_b._paper
