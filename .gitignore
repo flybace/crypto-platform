@@ -42,3 +42,4 @@ Thumbs.db
 # Accidental browser-command captures (preserved locally)
 /button.innerText.trim()).filter(Boolean).slice(-20)})
 /r.status)
+*.egg-info/
