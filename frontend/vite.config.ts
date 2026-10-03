@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: 4191,
+      // 允许 ngrok 固定公网域名访问（开发期）。allowedHosts: true 过于宽松，
+      // 这里只放行我们自己的静态域名。
+      allowedHosts: ['lankiness-hamburger-untidy.ngrok-free.dev'],
       proxy: {
         '/api': {
           target: apiTarget,
