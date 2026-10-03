@@ -52,6 +52,7 @@ import AssistantCenter from '../components/AssistantCenter.vue';
 import NotificationCenter from '../components/NotificationCenter.vue';
 import SystemCenter from '../components/SystemCenter.vue';
 import NetworkSettingsCenter from '../components/NetworkSettingsCenter.vue';
+import OverviewCockpit from '../components/OverviewCockpit.vue';
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -225,6 +226,8 @@ onMounted(loadOverview);
           </div>
           <div class="heading-stamp"><Activity :size="15" /> DEVELOPMENT SURFACE</div>
         </section>
+
+        <OverviewCockpit />
 
         <section class="metric-grid overview-metrics" aria-label="系统摘要">
           <article class="metric-cell">
