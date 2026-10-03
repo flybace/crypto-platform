@@ -103,3 +103,66 @@ export async function interpretNews(provider: AiProvider, event: NewsInterpretIn
   if (!content) throw new Error('模型返回为空');
   return String(content);
 }
+
+export interface AdviceJudgeInput {
+  symbol: string;
+  action_text: string;
+  urgency_text: string;
+  suggested_duration_hours: number;
+  position_guidance: string;
+  strategy_notes: Record<string, string>;
+  reason: string;
+  evidence: string[];
+  impact_score: number | string;
+  heat: number;
+  price_change: string; // 技术面,如 "+2.3%"
+  event_context: string[]; // 相关事件 标题+摘要
+}
+
+export function buildJudgePrompt(input: AdviceJudgeInput): string {
+  const notes = Object.entries(input.strategy_notes || {})
+    .map(([k, v]) => `${k}:${v}`).join('\n');
+  return [
+    '你是加密货币量化投顾,只做研究研判,不构成投资建议,不预测具体点位。',
+    '新闻只是影响行情的因素之一,必须结合规则层结论与价格技术面综合判断,不要只看新闻字面下结论。',
+    '请用简体中文按以下五节输出,每节精炼:',
+    '1. 综合方向:偏多 / 偏空 / 中性,一句话理由;',
+    '2. 置信度:高 / 中 / 低,并说明依据;',
+    '3. 操作建议:对趋势跟踪、动量、均值回归、被动持有四类策略各一句话;',
+    '4. 风险提示:最需要警惕的一两个点;',
+    '5. 有效期:这条研判大概管用多久,为什么。',
+    '',
+    `品种:${input.symbol}  价格技术面(近1h涨跌):${input.price_change}`,
+    `规则层建议:${input.action_text}  紧急度:${input.urgency_text}  建议时长:${input.suggested_duration_hours}h`,
+    `规则层仓位指引:${input.position_guidance}`,
+    `规则层策略话术:\n${notes}`,
+    `事由:${input.reason}`,
+    `依据新闻:${input.evidence.join(' / ')}`,
+    `相关事件:\n${input.event_context.join('\n')}`,
+    `影响分:${input.impact_score}  报道家数:${input.heat}`,
+  ].join('\n');
+}
+
+export async function judgeAdvice(provider: AiProvider, input: AdviceJudgeInput): Promise<string> {
+  const response = await fetch(`${provider.endpoint}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+Authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: provider.model,
+      messages: [{ role: 'user', content: buildJudgePrompt(input) }],
+      temperature: 0.3,
+      max_tokens: 1500,
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`模型调用失败 HTTP ${response.status} ${text.slice(0, 120)}`);
+  }
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content;
+  if (!content) throw new Error('模型返回为空');
+  return String(content);
+}

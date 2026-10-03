@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { AlertTriangle, ArrowDown, ArrowUp, Bot, Check, ChevronDown, ChevronRight, ExternalLink, Newspaper, RefreshCw, ShieldCheck, Sparkles, TrendingUp } from 'lucide-vue-next';
 import { api } from '../api';
 import type { NewsAdvice, NewsEvent, NewsRankingItem, NewsResonance, NewsResonanceItem, NewsSummary } from '../types';
-import { interpretNews, loadProvider, providerReady } from '../ai/provider';
+import { interpretNews, judgeAdvice, loadProvider, providerReady } from '../ai/provider';
 
 const emit = defineEmits<{ (e: 'go-assistant'): void }>();
 
@@ -126,6 +126,53 @@ const interpret = async (event: NewsEvent) => {
 
 const closeInterpret = () => { showInterpret.value = false; interpretEvent.value = null; };
 
+// AI 研判(综合:新闻 + 规则层结论 + 价格技术面,前端直连用户网关)
+const judgingKey = ref<string | null>(null);
+const judgeResult = ref('');
+const judgeItem = ref<NewsAdvice | null>(null);
+const showJudge = ref(false);
+const priceChangeOf = (symbol: string) => {
+  const hit = resonanceItems.value.find((item) => item.symbol === symbol);
+  return hit ? formatPct(hit.change_pct) : '暂无';
+};
+const judge = async (item: NewsAdvice, index: number) => {
+  const provider = loadProvider();
+  if (!providerReady(provider)) {
+    error.value = '请先在「AI 能力」页配置模型网关(地址 / Key / 模型名),再使用 AI 研判';
+    return;
+  }
+  const key = `${item.symbol}-${index}`;
+  judgingKey.value = key;
+  judgeResult.value = '';
+  judgeItem.value = item;
+  showJudge.value = true;
+  try {
+    const related = events.value
+      .filter((e) => (e.symbols || []).includes(item.symbol))
+      .slice(0, 3)
+      .map((e) => `《${e.title}》${(e.summary || '').slice(0, 120)}`);
+    judgeResult.value = await judgeAdvice(provider, {
+      symbol: item.symbol,
+      action_text: item.action_text,
+      urgency_text: item.urgency_text,
+      suggested_duration_hours: item.suggested_duration_hours,
+      position_guidance: item.position_guidance,
+      strategy_notes: item.strategy_notes || {},
+      reason: item.reason,
+      evidence: item.evidence || [],
+      impact_score: item.impact_score,
+      heat: item.heat,
+      price_change: priceChangeOf(item.symbol),
+      event_context: related,
+    });
+  } catch (cause: any) {
+    judgeResult.value = `研判失败:${cause?.message || '未知错误'}`;
+  } finally {
+    judgingKey.value = null;
+  }
+};
+const closeJudge = () => { showJudge.value = false; judgeItem.value = null; };
+
 const createEvent = async () => {
   if (!form.title.trim() || !form.summary.trim() || !form.source.trim()) {
     error.value = '标题、摘要和来源不能为空';
@@ -179,13 +226,14 @@ onMounted(() => {
     <section class="news-metrics" aria-label="新闻研究摘要"><article><span>登记事件</span><strong>{{ summary?.event_count || 0 }}</strong><em>必须保留来源</em></article><article><span>风险事件</span><strong class="risk-value">{{ riskCount }}</strong><em>不产生交易指令</em></article><article><span>共振候选</span><strong class="positive">{{ resonance?.count || 0 }}</strong><em>{{ interval }} 行情关联</em></article><article><span>执行资格</span><strong class="warn">关闭</strong><em>服务端安全门禁</em></article></section>
     <section class="news-layout">
       <section class="news-panel ranking-panel" aria-labelledby="ranking-title"><header class="section-heading"><div><p class="kicker">COIN SELECTION</p><h2 id="ranking-title">消息面选币榜</h2></div><TrendingUp :size="18" class="section-icon" /></header><div v-if="!ranking.length" class="news-empty compact"><Newspaper :size="20" /><span>暂无品种消息,抓取新闻后自动生成</span></div><div v-else class="ranking-list"><article v-for="item in ranking.slice(0, 12)" :key="item.symbol" class="ranking-row"><div class="ranking-top"><strong>{{ item.symbol }}</strong><b :class="item.direction === 'risk' ? 'state-risk' : item.direction === 'positive' ? 'state-positive' : 'state-neutral'">{{ item.direction === 'risk' ? '偏空' : item.direction === 'positive' ? '偏多' : '中性' }}</b></div><div class="ranking-stats"><span>消息分 {{ item.score }}</span><span>事件 {{ item.heat }}</span><span class="positive">利好 {{ item.positive }}</span><span class="negative">风险 {{ item.risk }}</span></div><p :title="item.top_title">{{ item.top_title }}</p></article></div><p class="panel-note"><ShieldCheck :size="13" /> 按 72 小时内新闻加权聚合,仅作选币参考,不构成交易指令。</p></section>
-      <section class="news-panel advice-panel" aria-labelledby="advice-title"><header class="section-heading"><div><p class="kicker">STRATEGY ADVICE</p><h2 id="advice-title">策略建议</h2></div><span class="section-meta">{{ advice.length }} ITEMS</span></header><div v-if="!advice.length" class="news-empty compact"><Newspaper :size="20" /><span>暂无重大事件建议</span></div><div v-else class="advice-list"><article v-for="(item, index) in advice.slice(0, 12)" :key="`${item.symbol}-${index}`" class="advice-row" :class="{ expanded: expandedAdvice === `${item.symbol}-${index}` }" @click="toggleAdvice(`${item.symbol}-${index}`)"><div class="advice-top"><strong>{{ item.symbol }}</strong><b :class="item.action === 'avoid_new_entries' ? 'state-risk' : item.action === 'watch_long_signals' ? 'state-positive' : 'state-neutral'">{{ item.action_text }}</b><em class="urgency" :class="`urgency-${item.urgency}`">{{ item.urgency_text }}</em></div><p>{{ item.reason }}</p><small>影响 {{ item.impact_score }} · {{ item.heat }} 家报道 · 建议 {{ item.suggested_duration_hours }}h · {{ item.sources.join('、') }}</small><div v-if="expandedAdvice === `${item.symbol}-${index}`" class="advice-detail"><p><strong>仓位指引：</strong>{{ item.position_guidance }}</p><div v-for="(note, archetype) in item.strategy_notes" :key="archetype" class="strategy-note"><b>{{ archetype }}</b><span>{{ note }}</span></div><p v-if="item.evidence?.length" class="evidence"><strong>依据：</strong>{{ item.evidence.join(' / ') }}</p></div></article></div><p class="panel-note"><ShieldCheck :size="13" /> 重大事件(多家报道或高风险)自动生成;回放时可开启新闻门控拦截新开仓。</p></section>
+      <section class="news-panel advice-panel" aria-labelledby="advice-title"><header class="section-heading"><div><p class="kicker">STRATEGY ADVICE</p><h2 id="advice-title">策略建议</h2></div><span class="section-meta">{{ advice.length }} ITEMS</span></header><div v-if="!advice.length" class="news-empty compact"><Newspaper :size="20" /><span>暂无重大事件建议</span></div><div v-else class="advice-list"><article v-for="(item, index) in advice.slice(0, 12)" :key="`${item.symbol}-${index}`" class="advice-row" :class="{ expanded: expandedAdvice === `${item.symbol}-${index}` }" @click="toggleAdvice(`${item.symbol}-${index}`)"><div class="advice-top"><strong>{{ item.symbol }}</strong><b :class="item.action === 'avoid_new_entries' ? 'state-risk' : item.action === 'watch_long_signals' ? 'state-positive' : 'state-neutral'">{{ item.action_text }}</b><em class="urgency" :class="`urgency-${item.urgency}`">{{ item.urgency_text }}</em><button class="ai-btn judge-btn" type="button" :disabled="judgingKey === `${item.symbol}-${index}`" @click.stop="judge(item, index)"><Sparkles :size="12" :class="{ spinning: judgingKey === `${item.symbol}-${index}` }" /><span>{{ judgingKey === `${item.symbol}-${index}` ? '研判中' : 'AI 研判' }}</span></button></div><p>{{ item.reason }}</p><small>影响 {{ item.impact_score }} · {{ item.heat }} 家报道 · 建议 {{ item.suggested_duration_hours }}h · {{ item.sources.join('、') }}</small><div v-if="expandedAdvice === `${item.symbol}-${index}`" class="advice-detail"><p><strong>仓位指引：</strong>{{ item.position_guidance }}</p><div v-for="(note, archetype) in item.strategy_notes" :key="archetype" class="strategy-note"><b>{{ archetype }}</b><span>{{ note }}</span></div><p v-if="item.evidence?.length" class="evidence"><strong>依据：</strong>{{ item.evidence.join(' / ') }}</p></div></article></div><p class="panel-note"><ShieldCheck :size="13" /> 重大事件(多家报道或高风险)自动生成;回放时可开启新闻门控拦截新开仓。</p></section>
     </section>
     <section class="news-panel event-panel" aria-labelledby="event-list-title"><header class="section-heading"><div><p class="kicker">SOURCE REGISTER</p><h2 id="event-list-title">事件记录</h2></div><span class="section-meta">{{ events.length }} EVENTS</span></header><div v-if="!events.length" class="news-empty compact"><Newspaper :size="20" /><span>暂无符合筛选条件的事件</span></div><div v-else class="event-list"><article v-for="event in events" :key="event.event_id" class="event-row"><div class="event-date">{{ formatTime(event.published_at) }}</div><div class="event-main"><div><strong>{{ event.title }}</strong><span class="sentiment-pill" :class="`sentiment-${event.sentiment}`">{{ sentimentLabel(event.sentiment) }}</span></div><p>{{ event.summary }}</p><small>{{ event.source }} · {{ event.symbols.join('、') || '全市场' }} · 影响 {{ formatNumber(event.impact_score, 0) }}</small></div><div class="event-actions"><button class="ai-btn" type="button" :disabled="interpreting === event.event_id" @click="interpret(event)"><Sparkles :size="13" :class="{ spinning: interpreting === event.event_id }" /><span>{{ interpreting === event.event_id ? '解读中' : 'AI 解读' }}</span></button><a v-if="event.source_url" class="event-link" :href="event.source_url" target="_blank" rel="noreferrer" title="打开来源" aria-label="打开来源"><ExternalLink :size="14" /></a><span v-else class="event-link-placeholder" aria-hidden="true" /></div></article></div></section>
     <section class="news-layout">
       <section class="news-panel ingest-panel" aria-labelledby="ingest-title"><header class="section-heading collapsible-toggle" @click="collapsedIngest = !collapsedIngest" title="点击展开/收起"><div><p class="kicker">EVENT INGESTION</p><h2 id="ingest-title">登记研究事件</h2></div><span class="collapse-hint">{{ collapsedIngest ? '展开' : '收起' }}</span><ChevronRight v-if="collapsedIngest" :size="16" class="collapse-icon" /><ChevronDown v-else :size="16" class="collapse-icon" /></header><div v-if="!collapsedIngest"><form class="news-form" @submit.prevent="createEvent"><label><span>标题</span><input v-model="form.title" maxlength="200" placeholder="例如：交易所公开规则变化" /></label><label><span>摘要</span><textarea v-model="form.summary" rows="4" maxlength="1000" placeholder="保留可核对的事件摘要" /></label><div class="form-grid"><label><span>来源</span><input v-model="form.source" maxlength="120" /></label><label><span>来源链接（可选）</span><input v-model="form.source_url" maxlength="500" /></label><label><span>发布时间（北京时间）</span><input v-model="form.published_at" type="datetime-local" /></label><label><span>影响分（0-100）</span><input v-model="form.impact_score" type="number" min="0" max="100" step="1" /></label></div><div class="form-grid"><label><span>关联币种</span><input v-model="form.symbols" placeholder="BTC/USDT, ETH/USDT" /></label><label><span>主题</span><input v-model="form.topics" placeholder="market, regulation" /></label><label><span>情绪</span><select v-model="form.sentiment"><option value="positive">正面</option><option value="neutral">中性</option><option value="risk">风险</option></select></label><label><span>风险等级</span><select v-model="form.risk_level"><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label></div><button class="primary-small" type="submit" :disabled="saving"><RefreshCw v-if="saving" :size="14" class="spinning" /><Check v-else :size="14" />登记事件</button></form><p class="panel-note"><AlertTriangle :size="13" /> RSS 自动抓取(CoinDesk / CoinTelegraph)+ 规则智能分析:品种映射、分类、情绪打分、影响分均为确定性规则,可审计;语义解读请用事件行的「AI 解读」按钮。</p></div></section>
       <section class="news-panel resonance-panel" aria-labelledby="resonance-title"><header class="section-heading collapsible-toggle" @click="collapsedResonance = !collapsedResonance" title="点击展开/收起"><div><p class="kicker">MARKET RESONANCE</p><h2 id="resonance-title">行情共振</h2></div><span class="section-meta">{{ resonanceItems.length }} ITEMS</span><span class="collapse-hint">{{ collapsedResonance ? '展开' : '收起' }}</span><ChevronRight v-if="collapsedResonance" :size="16" class="collapse-icon" /><ChevronDown v-else :size="16" class="collapse-icon" /></header><div v-if="!collapsedResonance"><div v-if="!resonanceItems.length" class="news-empty"><Newspaper :size="24" /><strong>暂无共振候选</strong><span>登记带币种的事件，或先确认对应周期有质量通过的历史数据。</span></div><div v-else class="resonance-list"><article v-for="item in resonanceItems" :key="`${item.venue_id}-${item.symbol}`"><div class="resonance-top"><strong>{{ item.symbol }}</strong><span>{{ venueLabel(item.venue_id) }} · {{ formatNumber(item.close, 4) }}</span><b :class="stateClass(item.state)">{{ stateLabel(item.state) }}</b></div><div class="resonance-stats"><span :class="Number(item.change_pct) >= 0 ? 'positive' : 'negative'"><ArrowUp v-if="Number(item.change_pct) >= 0" :size="12" /><ArrowDown v-else :size="12" />{{ formatPct(item.change_pct) }}</span><span>研究分 {{ formatNumber(item.news_score) }}</span><span>风险 {{ item.risk_level }}</span></div><p :title="resonanceTitle(item)">{{ item.action }} · {{ resonanceTitle(item) }}</p></article></div><p class="panel-note"><ShieldCheck :size="13" /> 共振只用于候选排序；必须再经过策略回测、模拟盘和风控。</p></div></section>
     </section>
+    <div v-if="showJudge" class="interpret-overlay" @click.self="closeJudge"><section class="interpret-modal" role="dialog" aria-label="AI 研判"><header><div><p class="kicker">AI JUDGEMENT</p><h2>{{ judgeItem?.symbol }} 综合研判</h2></div><button class="icon-button" type="button" @click="closeJudge" aria-label="关闭">✕</button></header><p class="interpret-meta">{{ judgeItem?.action_text }} · {{ judgeItem?.urgency_text }} · 建议 {{ judgeItem?.suggested_duration_hours }}h</p><div v-if="judgingKey" class="interpret-loading"><RefreshCw :size="16" class="spinning" /><span>模型研判中…</span></div><pre v-else class="interpret-body">{{ judgeResult }}</pre><p class="panel-note"><Bot :size="13" /> 新闻只是因素之一,已结合规则层结论与价格技术面综合研判,仅供研究参考,不构成投资建议。</p></section></div>
     <div v-if="showInterpret" class="interpret-overlay" @click.self="closeInterpret"><section class="interpret-modal" role="dialog" aria-label="AI 解读"><header><div><p class="kicker">AI INTERPRETATION</p><h2>{{ interpretEvent?.title }}</h2></div><button class="icon-button" type="button" @click="closeInterpret" aria-label="关闭">✕</button></header><p class="interpret-meta">{{ interpretEvent?.source }} · {{ interpretEvent?.symbols.join('、') || '全市场' }} · 影响 {{ interpretEvent?.impact_score }}</p><div v-if="interpreting" class="interpret-loading"><RefreshCw :size="16" class="spinning" /><span>模型解读中…</span></div><pre v-else class="interpret-body">{{ interpretResult }}</pre><p class="panel-note"><Bot :size="13" /> 由你配置的模型生成,仅供研究参考,不构成投资建议。</p></section></div>
   </section>
 </template>
@@ -235,6 +283,7 @@ onMounted(() => {
 .ai-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; border: 1px solid var(--line-bright); border-radius: 4px; padding: 5px 10px; color: var(--cyan); background: transparent; font-size: 10px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .ai-btn:hover:not(:disabled) { border-color: var(--cyan); }
 .ai-btn:disabled { opacity: .55; cursor: wait; }
+.judge-btn { padding: 4px 8px; font-size: 9px; }
 .ranking-list, .advice-list { display: grid; border-top: 1px solid var(--line); }
 .ranking-row, .advice-row { display: grid; gap: 6px; padding: 11px 4px; border-bottom: 1px solid var(--line); }
 .ranking-top, .advice-top { display: flex; align-items: center; gap: 9px; }
