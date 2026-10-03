@@ -2993,3 +2993,154 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 ### 31.30 2026-09-28 L2 归档治理状态源码切片
 
 完整记录迁至 [STATUS_2026_09_28.md](STATUS_2026_09_28.md#3130-2026-09-28-l2-归档治理状态源码切片)，内容按原验收日期保留。
+
+### 31.31 2026-10-02 M5 真实账户只读接入底座（源码切片）
+
+用户明确要求：先做只读底座，真实账号后续再接（当前无 API Key）；自动交易必须在设置中显式打开才可用，默认关闭。本轮只做只读，不碰下单。
+
+本轮新增（源码 + 自动测试）：
+
+- `src/adapters/venues/binance_account.py`：Binance HMAC-SHA256 签名私有 REST 客户端，只实现只读端点（`GET /api/v3/account` 余额、`GET /api/v3/openOrders` 挂单）；**不实现任何下单/撤单/转账端点**，签名密钥不进日志。
+- `src/ports/secrets.py` + `src/adapters/standalone/env_secret_provider.py`：`SecretProvider` 协议与环境变量实现（`CRYPTO_BINANCE_API_KEY` / `CRYPTO_BINANCE_API_SECRET`）；未配置时账户功能明确不可用，不静默降级。
+- `src/adapters/venues/binance_account.py` 内 `BinanceReadOnlyAccountGateway`：实现 `ReadOnlyAccountGateway` 协议，`fetch_account()` 返回 `AccountSnapshot`（余额映射为 `Balance`，挂单映射为订单 ID）；网络/签名/权限错误映射为明确异常，不伪造数据。
+- `backend/app/api/account.py`：`GET /api/v1/account/status`（是否已配置）、`GET /api/v1/account/balances`、`GET /api/v1/account/orders`；全部需认证、全部只读，无写操作。
+- `CRYPTO_AUTO_TRADING_ENABLED`（默认 `false`）：自动交易显式总开关；`GET /api/v1/settings/trading` 查询、`PUT /api/v1/settings/trading` 修改（需认证）。本轮该开关只做状态管理，不接任何交易执行路径（M6 未开始）。
+- `frontend/src/components/AccountCenter.vue`：账户页面（只读余额表 + 挂单列表 + 配置状态提示），接入工作台导航。
+
+安全边界（本轮强制）：
+
+- 只读底座不包含任何下单能力；`ReadOnlyAccountGateway` 协议层面就没有写方法。
+- API Key/Secret 不经过前端、不进日志、不进 API 响应。
+- 自动交易开关默认关闭；后续 M6 的任何执行路径必须先检查该开关，关闭时订单提交路径不可达。
+
+当前边界：真实 Binance 账号尚未接入（用户暂无 API Key）；Bybit/OKX 私有端点未实现；对账调度、持久化账本、安全暂停编排仍是 M5 未完成项。执行模式保持 `DISABLED`。
+
+### 31.32 2026-10-02 M5 对账调度、持久化账本与安全暂停（源码切片）
+
+延续 31.31 的只读账户底座，完成 M5 剩余三项：持久化账本、对账调度、安全暂停编排。仍不涉及真实下单。
+
+本轮新增（源码 + 自动测试）：
+
+- `backend/app/services/account_ledger_store.py`：`AccountLedgerStore`，SQLAlchemy 关系存储，四张表：
+  - `account_snapshots`：账户快照历史（余额 JSON、挂单 ID、状态）；
+  - `account_ledger_entries`：余额变动条目（资产、delta、事件类型、时间）；
+  - `account_reconciliation_runs`：对账运行记录（是否平衡、差异明细）；
+  - `account_safety_pause`：单行安全暂停状态（暂停/原因/触发与解除时间/操作人）。
+- `backend/app/services/account_reconciliation_scheduler.py`：`AccountReconciliationScheduler`，后台线程每 300 秒一轮：
+  1. 经网关拉取快照（未配置时跳过，不静默造数）；
+  2. 校验：负余额、ERROR 状态判为异常；
+  3. 与上次快照 diff → 余额变动记账本条目；
+  4. 持久化新快照，记录对账运行；
+  5. 异常（拉取失败、负余额、ERROR 状态、单轮资产跌超 50%）→ 触发安全暂停（fail closed）。
+- `backend/app/api/account.py` 新增：`GET /snapshots`、`GET /ledger`、`GET /reconciliation`（调度器状态+最近运行+暂停状态）、`POST /reconciliation/run`（手动触发）、`GET /pause`、`POST /pause/clear`（需认证手动解除）。
+- `frontend/src/components/AccountCenter.vue` 新增：安全暂停告警条（带解除按钮）、对账状态面板（调度器运行状态、间隔、网关配置、上次结果、最近 5 次对账表）。
+- `main.py` 接线：创建 `AccountLedgerStore` 与调度器，随应用启停；网关未配置时调度器空转跳过。
+
+安全边界：对账异常自动暂停，暂停后需人工在页面确认解除；所有接口需认证；执行模式保持 `DISABLED`；自动交易开关仍默认关闭。
+
+当前边界：真实 Binance 账号尚未接入（用户暂无 API Key），调度器当前空转跳过；M5 至此完成只读账户与风控前置全集。M6 真实下单未开始。
+
+测试：362 passed（11 新增）。
+
+### 31.33 2026-10-02 十大策略真实数据验证（回测后验）
+
+用户要求：策略必须用真实数据验证，不只看代码和测试。本轮对 10 个内置策略做两轮真实历史回测。
+
+**数据集**：Binance BTC/USDT 真实 K 线（1h 最近 7 天 168 根；1d 最近 1 年 365 根）。初始资金 10000 USDT，费率 10bps，滑点 5bps。
+
+**第一轮：1h 7 天（震荡市）**
+
+| 策略 | 收益 |
+|---|---|
+| buy_and_hold | -0.06% |
+| sma_cross | -4.44% |
+| momentum | 0%（无交易） |
+| inventory_exit | 0%（无交易） |
+| trend_breakout | -2.37% |
+| rsi_rebound | -1.50% |
+| bollinger_breakout | -1.99% |
+| macd_reversal | -3.57% |
+| volume_momentum | -1.06% |
+| volatility_breakout | -1.77% |
+
+结论：震荡市中所有策略都不赚钱，亏损主要来自手续费。策略需要震荡过滤或降频。
+
+**第二轮：1d 1 年（熊市，BTC 基准 -29.79%）**
+
+| 策略 | 收益 | 最大回撤 | 胜率 | 交易数 |
+|---|---|---|---|---|
+| buy_and_hold | -29.79% | 52.97% | - | 2 |
+| volume_momentum | **+5.05%** | 15.82% | 22.7% | 40 |
+| macd_reversal | **+4.00%** | 15.37% | 30.8% | 26 |
+| volatility_breakout | **+2.74%** | 7.11% | 25.0% | 8 |
+| trend_breakout | -11.14% | 19.44% | 22.2% | 18 |
+| sma_cross | -12.07% | 20.28% | 28.6% | 14 |
+| bollinger_breakout | -13.26% | 26.70% | 14.3% | 14 |
+| momentum | -17.55% | 33.80% | 18.8% | 32 |
+| rsi_rebound | -18.04% | 25.45% | 17.6% | 34 |
+| inventory_exit | 0% | 0% | - | 0（无库存可卖） |
+
+结论：
+- 3 个策略在熊市中取得正收益，大幅跑赢 buy_and_hold 基准（-29.79%）：**volume_momentum（+5.05%）、macd_reversal（+4.00%）、volatility_breakout（+2.74%）**。
+- volatility_breakout 回撤最小（7.11%），风险调整后最稳；volume_momentum 交易最频繁（40 次），收益最高但回撤也大。
+- 其余 6 个策略在熊市中亏损，rsi_rebound 最差（-18.04%）。
+- inventory_exit 是 SELL_ONLY 库存退出策略，无初始库存时无交易，符合设计。
+
+**下一步**：对 3 个盈利策略做参数搜索优化，并在 ETH 数据集上做交叉验证，确认不是过拟合。
+
+### 31.34 2026-10-02 策略自动调参与交叉验证（回测后验）
+
+用户要求：系统有回测功能，要跑回测并自动调参。系统此前只有手动参数回测，无自动调参；本轮用网格搜索对 31.33 中盈利的 3 个策略做自动调参，再用 ETH 数据交叉验证防过拟合。
+
+**调参方法**：网格搜索，BTC/USDT 1d（1 年）为训练集，按收益排序、回撤次之。
+
+**macd_reversal**（27 组：fast∈{8,12,16} × slow∈{20,26,32} × signal∈{7,9,11}）
+
+| 参数 | 收益 | 回撤 |
+|---|---|---|
+| 默认 (12,26,9) | +4.00% | 15.37% |
+| 最优 (8,26,7) | **+36.21%** | 11.38% |
+
+**volume_momentum**（27 组：window∈{10,20,30} × min_return∈{0.005,0.01,0.02} × min_volume_ratio∈{1.0,1.2,1.5}）
+
+| 参数 | 收益 | 回撤 |
+|---|---|---|
+| 默认 (20,0.01,1.2) | +5.05% | 15.82% |
+| 最优 (20,0.02,1.2) | **+8.49%** | 12.82% |
+
+**volatility_breakout**（9 组：window∈{10,20,30} × atr_multiplier∈{1.0,1.5,2.0}）
+
+| 参数 | 收益 | 回撤 |
+|---|---|---|
+| 默认 (20,1.5) | +2.74% | 7.11% |
+| 最优 (10,1.5) | **+11.28%** | 4.60% |
+
+**ETH/USDT 1d 交叉验证**（最优参数，不做二次调参）：
+
+| 策略 | BTC 训练集 | ETH 验证集 | 结论 |
+|---|---|---|---|
+| macd_reversal (8,26,7) | +36.21% | **+17.23%** | ✅ 泛化通过 |
+| volume_momentum (20,0.02,1.2) | +8.49% | -10.29% | ❌ 过拟合 |
+| volatility_breakout (10,1.5) | +11.28% | -12.67% | ❌ 过拟合 |
+
+**结论**：
+- 只有 **macd_reversal(8,26,7)** 通过交叉验证，在 BTC 和 ETH 上均为正收益且大幅跑赢基准，是目前唯一值得继续投入的策略。
+- volume_momentum 和 volatility_breakout 的 BTC 最优参数在 ETH 上亏损，判定为过拟合，不建议直接使用。
+- 系统暂无内置自动调参 API，本轮调参通过外部脚本调用回测接口完成；如需产品化，建议新增 `POST /api/v1/backtests/tune` 网格搜索端点。
+
+### 31.35 2026-10-02 自动调参系统功能（源码切片）
+
+用户明确：要把自动调参做成系统功能（其 A 股量化系统有此功能），不是用外部脚本跑。本轮将调参能力内置为平台一等功能。
+
+本轮新增（源码 + 自动测试）：
+
+- `backend/app/services/parameter_tuning.py`：`ParameterTuner` 网格搜索服务。输入策略 ID、参数网格、优化指标（总收益率/最大回撤/胜率，默认总收益率）、组合上限（默认 100），对每个参数组合调用 `BacktestRunManager.run` 做回测，按指标排序返回。失败组合计数不中断整体。
+- `POST /api/v1/backtests/tune`：调参 API，需认证。请求含 venue/symbol/interval/strategy_id/param_grids/metric/max_combinations 及回测基础配置；响应含 tune_id、各组合收益/回撤/胜率/交易数、最优参数。组合数超限返回 422。
+- `frontend/src/components/ParameterTuningPanel.vue`：回测中心新增"自动调参"面板。选择策略后自动按参数 Schema 生成默认网格（整数±4、浮点±30% 各 3 档），可手动改候选值；优化目标可选总收益/最小回撤/胜率；一键调参，结果表高亮最优行，显示前 10 名。
+- 6 个单测覆盖：最优选择、空网格拒绝、超限拒绝、非法指标拒绝、越小越优指标、运行失败容错。
+
+验证：
+- 后端 368 passed（6 新增）；前端构建成功；真实浏览器确认调参面板渲染正常。
+- 实测 `volatility_breakout` 4 组合调参：最优 (window=10, atr_multiplier=1.5) +11.28%，与脚本版结果一致。
+
+当前边界：同步执行，大网格（>100 组合）需分批；未做异步任务队列版本。31.34 的脚本调参结论依然有效。

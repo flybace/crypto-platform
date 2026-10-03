@@ -165,3 +165,38 @@ def probe_network(
         return probe_public_http(payload.venue_id, runtime_settings, network_snapshot=snapshot)
     except (ValueError, PublicNetworkSettingsError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+class TradingToggleRequest(BaseModel):
+    enabled: bool = Field(description="Explicitly enable or disable auto-trading")
+
+
+def _trading_store(request: Request) -> "TradingSettingsStore":
+    from ..services.trading_settings import TradingSettingsStore
+
+    store = getattr(request.app.state, "trading_settings_store", None)
+    if store is None:
+        raise HTTPException(status_code=503, detail="trading settings store is not configured")
+    return store
+
+
+@router.get("/trading")
+def trading_settings(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    """Current auto-trading toggle state. Defaults to disabled."""
+    store = _trading_store(request)
+    return {
+        "auto_trading_enabled": store.is_enabled(),
+        "note": "Auto-trading requires explicit enablement here. Trading execution is not yet implemented (M6).",
+    }
+
+
+@router.put("/trading")
+def update_trading_settings(
+    payload: TradingToggleRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    """Explicitly enable or disable auto-trading. Requires authentication."""
+    store = _trading_store(request)
+    enabled = store.set_enabled(payload.enabled)
+    return {"auto_trading_enabled": enabled}

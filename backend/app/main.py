@@ -45,6 +45,7 @@ from .api.tradeplan import router as tradeplan_router  # noqa: E402
 from .api.runtime import router as runtime_router  # noqa: E402
 from .api.strategy_matrices import router as strategy_matrices_router  # noqa: E402
 from .api.strategy_packages import router as strategy_packages_router  # noqa: E402
+from .api.account import router as account_router  # noqa: E402
 from .auth.service import AuthService  # noqa: E402
 from .services.advice import AdviceService  # noqa: E402
 from .services.assistant import AssistantService  # noqa: E402
@@ -233,6 +234,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         try:
+            account_recon_scheduler.start()
             yield
         finally:
             try:
@@ -242,6 +244,11 @@ def create_app(
                 close_catalog = getattr(runtime_instrument_catalog, "close", None)
                 if callable(close_catalog):
                     close_catalog()
+                close_account = getattr(account_gateway, "close", None)
+                if callable(close_account):
+                    close_account()
+                account_recon_scheduler.stop()
+                account_ledger_store.close()
                 runtime_history_jobs.close()
             finally:
                 task_store.close()
@@ -296,6 +303,40 @@ def create_app(
     )
     app.state.instrument_catalog = runtime_instrument_catalog
     app.state.public_tickers = runtime_ticker_service
+    # Read-only account foundation (M5): secret provider + Binance gateway.
+    # Gateway is only created when credentials are configured; otherwise the
+    # account API reports unconfigured instead of failing silently.
+    from adapters.standalone.env_secret_provider import EnvSecretProvider
+
+    secret_provider = EnvSecretProvider()
+    app.state.secret_provider = secret_provider
+    account_gateway = None
+    if secret_provider.is_configured("binance"):
+        from adapters.venues.binance_account import BinanceReadOnlyAccountGateway
+
+        account_gateway = BinanceReadOnlyAccountGateway(
+            secret_provider.get_api_key("binance") or "",
+            secret_provider.get_api_secret("binance") or "",
+            base_url=runtime_settings.binance_public_rest_base_url,
+            trust_env=runtime_settings.public_trust_env,
+        )
+    app.state.account_gateway = account_gateway
+    from .services.account_ledger_store import AccountLedgerStore
+    from .services.account_reconciliation_scheduler import AccountReconciliationScheduler
+
+    account_ledger_store = AccountLedgerStore(runtime_settings.database_url or "sqlite:///data/account-ledger.db")
+    app.state.account_ledger_store = account_ledger_store
+    account_recon_scheduler = AccountReconciliationScheduler(
+        ledger_store=account_ledger_store,
+        gateway=account_gateway,
+        interval_seconds=300,
+    )
+    app.state.account_recon_scheduler = account_recon_scheduler
+    from .services.trading_settings import TradingSettingsStore
+
+    app.state.trading_settings_store = TradingSettingsStore(
+        Path(runtime_settings.history_data_path).parent / "trading-settings.json"
+    )
     app.state.backtest_runs = runtime_backtest_runs
     app.state.strategy_registry = strategy_registry
     app.state.strategy_packages = strategy_packages
@@ -372,6 +413,7 @@ def create_app(
     app.include_router(tasks_router)
     app.include_router(tradeplan_router)
     app.include_router(runtime_router)
+    app.include_router(account_router)
 
     return app
 

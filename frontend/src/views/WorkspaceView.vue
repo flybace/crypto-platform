@@ -27,6 +27,7 @@ import {
   Sprout,
   Target,
   WifiOff,
+  Wallet,
 } from 'lucide-vue-next';
 import { useRouter } from 'vue-router';
 import { api } from '../api';
@@ -34,6 +35,7 @@ import { useAuthStore } from '../stores/auth';
 import type { MarketOverview, MarketSummary, MarketSummaryQuote, VenueStatus } from '../types';
 import HistoryDataCenter from '../components/HistoryDataCenter.vue';
 import MarketCenter from '../components/MarketCenter.vue';
+import AccountCenter from '../components/AccountCenter.vue';
 import StrategyCenter from '../components/StrategyCenter.vue';
 import NewsCenter from '../components/NewsCenter.vue';
 import BacktestCenter from '../components/BacktestCenter.vue';
@@ -55,7 +57,7 @@ const auth = useAuthStore();
 const router = useRouter();
 const overview = ref<MarketOverview | null>(null);
 const marketSummary = ref<MarketSummary | null>(null);
-type WorkspaceSection = 'overview' | 'plan' | 'history' | 'market' | 'strategies' | 'research' | 'news' | 'advice' | 'pools' | 'screening' | 'incubator' | 'backtests' | 'paper' | 'risk' | 'tasks' | 'assistant' | 'notifications' | 'system' | 'network';
+type WorkspaceSection = 'overview' | 'plan' | 'history' | 'market' | 'account' | 'strategies' | 'research' | 'news' | 'advice' | 'pools' | 'screening' | 'incubator' | 'backtests' | 'paper' | 'risk' | 'tasks' | 'assistant' | 'notifications' | 'system' | 'network';
 const activeSection = ref<WorkspaceSection>('overview');
 const loading = ref(false);
 const error = ref('');
@@ -65,6 +67,7 @@ const navItems: { key: WorkspaceSection; label: string; icon: typeof LayoutDashb
   { key: 'plan', label: '运行计划', icon: CalendarClock, enabled: true },
   { key: 'history', label: '历史数据', icon: Database, enabled: true },
   { key: 'market', label: '行情', icon: CandlestickChart, enabled: true },
+  { key: 'account', label: '账户', icon: Wallet, enabled: true },
   { key: 'strategies', label: '策略', icon: FlaskConical, enabled: true },
   { key: 'research', label: '研究', icon: SearchCode, enabled: true },
   { key: 'news', label: '新闻', icon: Newspaper, enabled: true },
@@ -196,6 +199,7 @@ onMounted(loadOverview);
          <HistoryDataCenter v-if="activeSection === 'history'" />
          <RuntimePlanCenter v-else-if="activeSection === 'plan'" />
          <MarketCenter v-else-if="activeSection === 'market'" />
+         <AccountCenter v-else-if="activeSection === 'account'" />
          <StrategyCenter v-else-if="activeSection === 'strategies'" @open-backtest="activeSection = 'backtests'" />
          <ResearchCenter v-else-if="activeSection === 'research'" />
          <NewsCenter v-else-if="activeSection === 'news'" />

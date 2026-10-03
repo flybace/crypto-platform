@@ -4,6 +4,7 @@ import { BarChart3, Check, CircleAlert, Play, RefreshCw, ShieldCheck, Trash2 } f
 import { api } from '../api';
 import type { BacktestRun, BacktestSummary, HistoryCoverage, HistoryDataset, QueuedTaskResponse, StrategyDefinition } from '../types';
 import { isQueuedTask, resolveTaskResponse, taskStatusLabel } from '../services/taskPolling';
+import ParameterTuningPanel from './ParameterTuningPanel.vue';
 
 const datasets = ref<HistoryDataset[]>([]);
 const strategies = ref<StrategyDefinition[]>([]);
@@ -213,6 +214,7 @@ onMounted(loadData);
     </section>
 
     <section class="backtest-panel run-history-panel" aria-labelledby="run-history-title"><div class="section-heading"><div><p class="kicker">RUN ARCHIVE</p><h2 id="run-history-title">回测记录</h2></div><div class="run-history-actions"><span class="section-meta">{{ runs.length }} RUNS</span><button class="icon-button" type="button" title="清空回测记录" aria-label="清空回测记录" :disabled="!runs.length" @click="clearRuns"><Trash2 :size="15" /></button></div></div><div v-if="!runs.length" class="backtest-empty compact"><BarChart3 :size="20" /><p>还没有回测记录</p></div><div v-else class="run-list"><article v-for="run in runs" :key="run.run_id" class="run-row" @click="currentRun = run"><div class="run-mark"><Check :size="14" /></div><div><strong>{{ strategyName(run.strategy_id) }}</strong><span>{{ run.dataset.venue_id.toUpperCase() }} · {{ run.dataset.instrument_key.split(':').pop() }} · {{ formatTime(run.created_at) }}</span></div><b :class="Number(run.total_return_pct) >= 0 ? 'positive' : 'negative'">{{ formatPct(run.total_return_pct) }}</b><span class="state-pill connected">已完成</span><button class="icon-button run-delete" type="button" title="删除这条回测记录" aria-label="删除这条回测记录" @click.stop="deleteRun(run.run_id)"><Trash2 :size="14" /></button></article></div></section>
+      <ParameterTuningPanel :strategies="strategies" venue-id="binance" symbol="BTC/USDT" interval="1d" />
   </section>
 </template>
 
