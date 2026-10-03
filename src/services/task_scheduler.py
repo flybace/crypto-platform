@@ -24,7 +24,6 @@ from backend.app.services.news import NewsService
 from backend.app.services.news_ingest import NewsIngestor
 from backend.app.services.paper_automation import PaperAutomationService
 from backend.app.services.paper_follow import PaperFollowService
-from backend.app.services.paper_live import PaperLiveService
 from backend.app.services.paper_trading import PaperTradingService
 from backend.app.services.strategy_registry import StrategyRegistry
 from backend.app.services.task_queue import RedisTaskQueue
@@ -123,12 +122,6 @@ class HistoryScheduler:
         self.paper_follow = PaperFollowService(
             state_path=history_root / ".runtime" / "paper-follow.json",
         )
-        self.paper_live = PaperLiveService(
-            self.paper_trading,
-            self.strategy_registry,
-            self.service.storage,
-            state_store=domain_state("paper-live.json"),
-        )
         # News intelligence: RSS ingestion on a fixed interval. The ingestor
         # never raises into the tick; failures are logged and retried later.
         self.news_service = NewsService(
@@ -152,9 +145,6 @@ class HistoryScheduler:
             follow = self._maybe_dispatch_paper_follow(now, result)
             if follow is not None:
                 result["paper_follow"] = follow
-            live = self._maybe_run_paper_live(now, result)
-            if live is not None:
-                result["paper_live"] = live
             news = self._maybe_ingest_news(now)
             if news is not None:
                 result["news_ingest"] = news
@@ -231,26 +221,6 @@ class HistoryScheduler:
         except Exception as error:
             LOGGER.warning("paper follow dispatch failed: %s", error)
             return {"status": "dispatch_failed", "error": str(error)}
-
-    def _maybe_run_paper_live(
-        self, now: datetime, result: dict[str, object]
-    ) -> dict[str, object] | None:
-        """Run one live paper-loop iteration after a successful history tick.
-
-        Only fires when history is up to date. The loop itself is idempotent
-        (one trade per candle at most) and touches only the simulated paper
-        broker, so running it on every up-to-date tick is safe.
-        """
-        try:
-            if str(result.get("status", "")).strip().lower() != "up_to_date":
-                return None
-            outcome = self.paper_live.tick()
-            if isinstance(outcome, dict) and outcome.get("status") == "disabled":
-                return None
-            return outcome
-        except Exception as error:
-            LOGGER.warning("paper live tick failed: %s", error)
-            return {"status": "tick_failed", "error": str(error)}
 
     def _maybe_ingest_news(self, now: datetime) -> dict[str, object] | None:
         """Run the RSS news ingestor when its interval has elapsed.
