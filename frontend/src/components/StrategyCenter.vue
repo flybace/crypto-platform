@@ -11,6 +11,7 @@ const management = ref<StrategyManagement[]>([]);
 const loading = ref(false);
 const saving = ref('');
 const error = ref('');
+const funnels = ref<Record<string, { rating: string; stage: string; score: number }>>({});
 const availableCount = computed(() => strategies.value.filter((item) => item.enabled !== false && item.modes.includes('backtest')).length);
 const enabledCount = computed(() => management.value.filter((item) => item.enabled).length);
 
@@ -18,18 +19,32 @@ const loadStrategies = async () => {
   loading.value = true;
   error.value = '';
   try {
-    const [catalogResponse, managementResponse] = await Promise.all([
+    const [catalogResponse, managementResponse, funnelResponse] = await Promise.all([
       api.get<{ items: StrategyDefinition[] }>('/strategies/catalog'),
       api.get<{ items: StrategyManagement[] }>('/strategies/management'),
+      api.get<{ items: any[] }>('/strategy/funnel').catch(() => ({ data: { items: [] } })),
     ]);
     strategies.value = catalogResponse.data.items;
     management.value = managementResponse.data.items;
+    // 按 strategy_id 取最高评级（不同参数可能有多个 funnel）
+    const byStrategy: Record<string, { rating: string; stage: string; score: number }> = {};
+    for (const f of funnelResponse.data.items || []) {
+      const sid = f.strategy_id;
+      const order: Record<string, number> = { D: 0, C: 1, B: 2, A: 3, S: 4 };
+      if (!byStrategy[sid] || (order[f.rating] || 0) > (order[byStrategy[sid].rating] || 0)) {
+        byStrategy[sid] = { rating: f.rating, stage: f.stage, score: f.score };
+      }
+    }
+    funnels.value = byStrategy;
   } catch (cause: any) {
     error.value = cause.response?.data?.detail || '策略目录读取失败';
   } finally {
     loading.value = false;
   }
 };
+
+const stageLabel = (stage: string) => ({ scored: '已评分', retested: '复测', cross_validated: '跨池验证', paper_approved: '准入' }[stage] || stage);
+const getFunnel = (strategyId: string) => funnels.value[strategyId] || null;
 
 const toggleStrategy = async (strategy: StrategyDefinition) => {
   const next = strategy.enabled === false;
@@ -65,7 +80,7 @@ onMounted(loadStrategies);
       <article v-for="(strategy, index) in strategies" :key="strategy.strategy_id" class="strategy-row">
         <div class="strategy-number">{{ String(index + 1).padStart(2, '0') }}</div>
         <div class="strategy-icon"><FlaskConical :size="18" /></div>
-        <div class="strategy-main"><div class="strategy-title-line"><h2>{{ strategy.name }}</h2><span class="state-pill" :class="strategy.enabled === false ? 'disabled' : 'connected'">{{ strategy.enabled === false ? '已停用' : '可用' }}</span></div><p>{{ strategy.description }}</p><div class="strategy-tags"><span v-for="mode in strategy.modes" :key="mode">{{ modeLabel(mode) }}</span><span v-for="parameter in strategy.parameter_schema || []" :key="String(parameter.key)">参数 · {{ String(parameter.label || parameter.key) }}</span></div></div>
+        <div class="strategy-main"><div class="strategy-title-line"><h2>{{ strategy.name }}</h2><span class="state-pill" :class="strategy.enabled === false ? 'disabled' : 'connected'">{{ strategy.enabled === false ? '已停用' : '可用' }}</span><span v-if="getFunnel(strategy.strategy_id)" class="rating-badge" :class="'rating-' + getFunnel(strategy.strategy_id)!.rating" :title="'评分 ' + getFunnel(strategy.strategy_id)!.score + ' · ' + stageLabel(getFunnel(strategy.strategy_id)!.stage)">{{ getFunnel(strategy.strategy_id)!.rating }}</span><span v-else class="rating-badge rating-none" title="尚未评级">—</span></div><p>{{ strategy.description }}</p><div class="strategy-tags"><span v-for="mode in strategy.modes" :key="mode">{{ modeLabel(mode) }}</span><span v-for="parameter in strategy.parameter_schema || []" :key="String(parameter.key)">参数 · {{ String(parameter.label || parameter.key) }}</span></div></div>
         <label class="strategy-toggle" :class="{ saving: saving === strategy.strategy_id }"><input type="checkbox" :checked="strategy.enabled !== false" :disabled="saving === strategy.strategy_id" @change="toggleStrategy(strategy)" /><span class="toggle-box"><Check :size="12" /></span><span>{{ strategy.enabled === false ? '启用' : '停用' }}</span></label>
         <button class="strategy-open" type="button" title="使用该目录进入回测中心" @click="emit('openBacktest')">回测 <ArrowRight :size="15" /></button>
       </article>
@@ -108,5 +123,12 @@ onMounted(loadStrategies);
 .strategy-open:hover { border-color: var(--cyan); color: var(--cyan); }
 .strategy-empty { display: grid; justify-items: center; gap: 8px; min-height: 160px; place-content: center; border: 1px dashed var(--line-bright); color: var(--dim); }
 .strategy-empty p { margin: 0; color: var(--muted); font-size: 12px; }
+.rating-badge { display: inline-grid; place-items: center; min-width: 26px; height: 22px; padding: 0 6px; border-radius: 4px; font-size: 12px; font-weight: 700; }
+.rating-S { background: #ffd700; color: #000; }
+.rating-A { background: #1faa53; color: #fff; }
+.rating-B { background: #2196f3; color: #fff; }
+.rating-C { background: #ff9800; color: #fff; }
+.rating-D { background: #f0433a; color: #fff; }
+.rating-none { background: transparent; border: 1px dashed var(--line); color: var(--dim); }
 @media (max-width: 700px) { .strategy-actions .heading-stamp { display: none; } .strategy-metrics { grid-template-columns: 1fr; } .strategy-metrics article { min-height: 82px; border-right: 0; border-bottom: 1px solid var(--line); } .strategy-metrics article:last-child { border-bottom: 0; } .strategy-row { grid-template-columns: 30px 34px minmax(0, 1fr); gap: 10px; padding: 16px 0; } .strategy-toggle { grid-column: 3; justify-self: start; } .strategy-open { grid-column: 3; justify-self: start; } }
 </style>
