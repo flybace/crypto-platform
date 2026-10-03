@@ -198,7 +198,26 @@ class PaperLiveService:
             return {
                 **deepcopy(self._config),
                 "recent_trades": deepcopy(self._trades[-10:][::-1]),
+                "account": self._account_snapshot(),
             }
+
+    def _account_snapshot(self) -> dict[str, Any] | None:
+        """返回本实例独立模拟账户在当前 venue 的余额快照（前端可见）。"""
+        paper = self._paper
+        if paper is None:
+            return None
+        try:
+            venue_id = self._config.get("venue_id")
+            # PaperTradingService._accounts 是 venue_id -> PaperAccount
+            account = paper._accounts.get(venue_id)  # noqa: SLF001
+            if account is None:
+                return None
+            return {
+                "venue_id": venue_id,
+                "balances": {k: str(v) for k, v in account.snapshot().items()},
+            }
+        except Exception:
+            return None
 
     def get_config(self) -> dict[str, Any]:
         """返回纯配置（不含 recent_trades），用于 Manager 持久化实例列表。"""
@@ -579,6 +598,23 @@ class PaperLiveManager:
     def get_instance(self, instance_id: str) -> PaperLiveService | None:
         with self._lock:
             return self._instances.get(instance_id)
+
+    def reset_instance_account(self, instance_id: str, balances: dict | None = None) -> dict[str, Any]:
+        """重置指定实例的独立模拟账户为干净状态（默认纯 USDT）。"""
+        with self._lock:
+            svc = self._instances.get(instance_id)
+            if svc is None:
+                raise KeyError(f"instance not found: {instance_id}")
+            paper = svc._paper  # noqa: SLF001
+            if paper is None:
+                raise RuntimeError("instance has no paper account")
+            result = paper.reset(balances, venue_id=svc.get_config().get("venue_id"))
+            # 重置后清掉策略的持仓记忆（entry_price 等），避免风控用旧价格
+            cfg = svc.get_config()
+            cfg["entry_price"] = None
+            cfg["day_start_equity"] = None
+            svc.update(cfg)
+            return result
 
     def tick_all(self) -> list[dict[str, Any]]:
         """对所有启用的实例各跑一轮。引擎每 60 秒调用一次。"""

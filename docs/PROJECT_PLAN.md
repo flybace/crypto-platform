@@ -3351,3 +3351,22 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 全量 346 passed。
 - 真机 API：旧实例自动迁移（OKX BTC/USDT 1h macd_reversal，enabled=True）；创建第二个实例（Binance ETH/USDT sma_cross）成功；删除后恢复 1 个。
 - 前端构建通过。
+
+### 31.46 2026-10-04 模拟账户完善：干净账户 + 实例账户可见
+
+背景：用户要求"完善账号环节，使用模拟账号进行模拟盘"。发现两个问题：①默认余额自带 BTC 0.1/ETH 1/BNB 5 库存，账户不干净；②多策略实例的独立账户在前端不可见。
+
+实现（分支 `codex/paper-account`）：
+- `PaperTradingService.DEFAULT_BALANCES` 改为纯 USDT 10000（去币种库存），策略从 0 持仓开始。
+- `PaperLiveService.get()` 新增 `account` 字段：本实例独立账户在当前 venue 的余额快照。
+- `PaperLiveManager.reset_instance_account()`：重置指定实例的独立账户（默认纯 USDT），同时清掉 entry_price/day_start_equity 持仓记忆。
+- 新 API `POST /paper/live/instances/{id}/reset-account`。
+- 前端：实例列表新增"账户余额"列；操作列新增"重置账户"按钮（二次确认）。
+- 修复 `test_runtime_state.py` 两个测试以适配纯 USDT 默认。
+
+线上执行：
+- 共享账户（binance/bybit/okx）已重置为纯 USDT 10000。
+- 实例 live-d029c5f3（OKX BTC/USDT）账户已重置为纯 USDT 10000。
+- 策略参数已恢复 fast=8/slow=26/signal=7。
+
+验证：全量 346 passed；真机 API 确认账户干净、参数恢复。

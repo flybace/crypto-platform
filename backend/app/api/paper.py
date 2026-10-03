@@ -281,6 +281,22 @@ def delete_live_instance(
         raise HTTPException(status_code=404, detail="instance not found")
 
 
+@router.post("/live/instances/{instance_id}/reset-account", status_code=status.HTTP_200_OK)
+def reset_instance_account(
+    instance_id: str,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    """重置指定策略实例的独立模拟账户（默认纯 USDT 10000）。"""
+    manager = request.app.state.paper_live_manager
+    try:
+        return manager.reset_instance_account(instance_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="instance not found")
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 @router.post("/live/instances/{instance_id}/run", status_code=status.HTTP_201_CREATED)
 def run_live_instance(
     instance_id: str,

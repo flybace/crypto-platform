@@ -112,21 +112,22 @@ def test_paper_account_and_order_id_restore(tmp_path) -> None:
         venue_id="binance",
         symbol="BTC/USDT",
         interval="1h",
-        side="SELL",
+        side="BUY",
         quantity=Decimal("0.01"),
-        limit_price=None,
+        limit_price=Decimal("50000"),
         request_id="paper-request-1",
     )
     restored = PaperTradingService(storage, state_path=state_path)
     assert restored.orders()[0]["order_id"] == first["order_id"]
-    assert restored.summary()["balances"]["BTC"] == "0.09"
+    # 默认纯 USDT 10000，买入 0.01 BTC @50000 花掉 500 USDT
+    assert restored.summary()["balances"]["BTC"] == "0.01"
     second = restored.submit(
         venue_id="binance",
         symbol="BTC/USDT",
         interval="1h",
-        side="SELL",
+        side="BUY",
         quantity=Decimal("0.01"),
-        limit_price=None,
+        limit_price=Decimal("50000"),
         request_id="paper-request-2",
     )
     assert second["order_id"] == "paper-000002"
@@ -143,18 +144,18 @@ def test_paper_accounts_are_isolated_and_order_ids_are_namespaced(tmp_path) -> N
         venue_id="binance",
         symbol="BTC/USDT",
         interval="1h",
-        side="SELL",
+        side="BUY",
         quantity=Decimal("0.01"),
-        limit_price=None,
+        limit_price=Decimal("50000"),
         request_id="binance-request",
     )
     bybit_order = service.submit(
         venue_id="bybit",
         symbol="BTC/USDT",
         interval="1h",
-        side="SELL",
+        side="BUY",
         quantity=Decimal("0.01"),
-        limit_price=None,
+        limit_price=Decimal("50000"),
         request_id="bybit-request",
     )
 
@@ -165,21 +166,21 @@ def test_paper_accounts_are_isolated_and_order_ids_are_namespaced(tmp_path) -> N
     summary = service.summary()
     accounts = {item["venue_id"]: item for item in summary["accounts"]}
     assert set(accounts) == {"binance", "okx", "bybit"}
-    assert accounts["binance"]["balances"]["BTC"] == "0.09"
-    assert accounts["bybit"]["balances"]["BTC"] == "0.09"
-    assert summary["balances"]["BTC"] == "0.09"
-    assert summary["aggregate_balances"]["BTC"] == "0.28"
+    assert accounts["binance"]["balances"]["BTC"] == "0.01"
+    assert accounts["bybit"]["balances"]["BTC"] == "0.01"
+    assert summary["balances"]["BTC"] == "0.01"
+    assert summary["aggregate_balances"]["BTC"] == "0.02"
 
     restored = PaperTradingService(storage, state_path=state_path)
     restored_accounts = {item["venue_id"]: item for item in restored.summary()["accounts"]}
-    assert restored_accounts["binance"]["balances"]["BTC"] == "0.09"
-    assert restored_accounts["bybit"]["balances"]["BTC"] == "0.09"
-    assert restored_accounts["okx"]["balances"]["BTC"] == "0.1"
+    assert restored_accounts["binance"]["balances"]["BTC"] == "0.01"
+    assert restored_accounts["bybit"]["balances"]["BTC"] == "0.01"
+    assert restored_accounts["okx"]["balances"].get("BTC", "0") == "0"
 
     restored.reset(venue_id="bybit")
     after_reset = {item["venue_id"]: item for item in restored.summary()["accounts"]}
-    assert after_reset["bybit"]["balances"]["BTC"] == "0.1"
-    assert after_reset["binance"]["balances"]["BTC"] == "0.09"
+    assert after_reset["bybit"]["balances"] == {"USDT": "10000"}
+    assert after_reset["binance"]["balances"]["BTC"] == "0.01"
     assert all(item["venue_id"] != "bybit" for item in restored.orders())
 
 
