@@ -415,6 +415,14 @@ def create_app(
             task_store=task_store,
         )
 
+    # 市场状态服务：评估市场强弱，联动仓位；危机/数据不可用时禁开仓
+    from .services.market_regime import MarketRegimeService
+
+    market_regime = MarketRegimeService(
+        storage=runtime_history_service.storage,
+        state_store=domain_state("market-regime.json"),
+    )
+    app.state.market_regime = market_regime
     paper_live_manager = PaperLiveManager(
         strategies=strategy_registry,
         storage=runtime_history_service.storage,
@@ -441,14 +449,6 @@ def create_app(
     app.state.strategy_funnel = StrategyFunnelService(
         state_store=domain_state("strategy-funnel.json"),
     )
-    # 市场状态服务：评估市场强弱，联动仓位；危机/数据不可用时禁开仓
-    from .services.market_regime import MarketRegimeService
-
-    market_regime = MarketRegimeService(
-        storage=runtime_history_service.storage,
-        state_store=domain_state("market-regime.json"),
-    )
-    app.state.market_regime = market_regime
     # 兼容旧 API：app.state.paper_live 指向 manager（API 已更新为多实例）
     paper_live_logger = logging.getLogger("crypto.paper_live")
 
