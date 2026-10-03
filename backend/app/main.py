@@ -49,6 +49,7 @@ from .api.strategy_matrices import router as strategy_matrices_router  # noqa: E
 from .api.strategy_packages import router as strategy_packages_router  # noqa: E402
 from .api.account import router as account_router  # noqa: E402
 from .api.strategy_funnel import router as strategy_funnel_router  # noqa: E402
+from .api.market_regime import router as market_regime_router  # noqa: E402
 from .auth.service import AuthService  # noqa: E402
 from .services.advice import AdviceService  # noqa: E402
 from .services.assistant import AssistantService  # noqa: E402
@@ -419,6 +420,7 @@ def create_app(
         storage=runtime_history_service.storage,
         state_store=domain_state("paper-live-manager.json"),
         paper_factory=_paper_factory,
+        regime_service=market_regime,
     )
     # 迁移旧单实例：首次运行时把 paper-live.json 导入为默认实例
     if not paper_live_manager.list_instances():
@@ -439,6 +441,14 @@ def create_app(
     app.state.strategy_funnel = StrategyFunnelService(
         state_store=domain_state("strategy-funnel.json"),
     )
+    # 市场状态服务：评估市场强弱，联动仓位；危机/数据不可用时禁开仓
+    from .services.market_regime import MarketRegimeService
+
+    market_regime = MarketRegimeService(
+        storage=runtime_history_service.storage,
+        state_store=domain_state("market-regime.json"),
+    )
+    app.state.market_regime = market_regime
     # 兼容旧 API：app.state.paper_live 指向 manager（API 已更新为多实例）
     paper_live_logger = logging.getLogger("crypto.paper_live")
 
@@ -499,6 +509,7 @@ def create_app(
     app.include_router(screening_router)
     app.include_router(paper_router)
     app.include_router(strategy_funnel_router)
+    app.include_router(market_regime_router)
     app.include_router(risk_router)
     app.include_router(research_router)
     app.include_router(tasks_router)
