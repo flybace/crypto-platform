@@ -112,6 +112,21 @@ class PaperFollowRequest(BaseModel):
         return _decimal(value)
 
 
+class PaperLiveRequest(BaseModel):
+    enabled: bool = False
+    venue_id: str = Field(default="binance", min_length=1, max_length=32)
+    symbol: str = Field(default="BTC/USDT", min_length=2, max_length=32)
+    interval: Literal["1d", "1h", "5m"] = "1h"
+    strategy_id: str = Field(default="macd_reversal", min_length=1, max_length=64)
+    strategy_parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
+    allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
+
+    @field_validator("allocation_ratio", mode="before")
+    @classmethod
+    def finite_decimal(cls, value):
+        return _decimal(value)
+
+
 def _service(request: Request):
     return request.app.state.paper_trading
 
@@ -207,6 +222,36 @@ def run_follow(request: Request, _: object = Depends(require_user)) -> dict[str,
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return {"snapshot": snapshot}
+
+
+@router.get("/live")
+def live(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    service = request.app.state.paper_live
+    return service.get()
+
+
+@router.put("/live")
+def update_live(
+    payload: PaperLiveRequest,
+    request: Request,
+    _: object = Depends(require_user),
+) -> dict[str, object]:
+    service = request.app.state.paper_live
+    try:
+        return service.update(payload.model_dump(mode="json"))
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/live/run", status_code=status.HTTP_201_CREATED)
+def run_live(request: Request, _: object = Depends(require_user)) -> dict[str, object]:
+    service = request.app.state.paper_live
+    if not service.get().get("enabled"):
+        raise HTTPException(status_code=422, detail="paper live loop is disabled")
+    try:
+        return service.tick()
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.get("/summary")

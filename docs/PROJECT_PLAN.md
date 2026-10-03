@@ -3274,3 +3274,26 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 
 边界：
 - 手动触发，未做定时自动研判（自动跑会持续消耗用户 DeepSeek 额度，需用户明确批准再做）。
+
+### 31.43 2026-10-03 实盘模拟循环：策略信号直达模拟账号下单
+
+分支：`codex/paper-live`。
+
+背景：此前模拟盘的策略回放与模拟账号是脱节的——回放只记绩效记录，从不在模拟账号上下单；`POST /paper/orders` 只能手单。用户要求"模拟盘用模拟账号先弄起来"。
+
+做了什么：
+- 新增 `backend/app/services/paper_live.py::PaperLiveService`：实盘模拟循环。每 tick 取最新 K 线，用 `CandleBacktestEngine.signal_at` 计算最新收盘 K 线的策略信号（不偷看未来），按信号翻仓：BUY 且空仓 → 按 `allocation_ratio` 比例用 quote 余额买入；SELL 且持仓 → 全平。经 `PaperTradingService.submit` 走模拟撮合，只写模拟账本。
+- 幂等：每根 K 线最多交易一次（`last_candle_time`）；订单 request_id 按 `paper-live:{venue}:{symbol}:{interval}:{candle}:{side}` 确定性生成，重试不重复下单。
+- 调度器（`src/services/task_scheduler.py`）：历史同步 `up_to_date` 后自动跑一轮 `tick()`；失败只记 warning，不影响主流程。默认关闭，用户在模拟盘页显式启用。
+- API：`GET /paper/live`、`PUT /paper/live`（配置）、`POST /paper/live/run`（手动执行一次）。
+- 前端模拟盘页新增「实盘模拟」面板：市场/品种/周期/策略/参数/仓位比例、启用开关、保存配置、立即执行一次、状态（上次执行/信号/累计下单）与最近成交表。
+- 运维：Binance 在本机被地理封锁、Bybit 403，调度器改为 `--venues okx` 只同步 OKX（否则全局退避导致自动循环不触发）；setup.sh 待同步该改动。
+
+验证：
+- 单测 `tests/unit/test_paper_live.py` 16 passed（信号→订单决策表、每 K 线只交易一次、确定性 request_id、配置校验）；全量 unit+integration 332 passed。
+- 真实链路：启用后手动 tick，OKX BTC/USDT 1h 最新 K 线信号为 null → 正确无交易；前端构建通过；Playwright 真实浏览器验证面板渲染与"运行中"状态。
+
+边界：
+- 只碰模拟撮合器，真实执行保持 DISABLED；不连真实 API Key。
+- 首次启用不会追补历史信号（避免追旧信号），只对新 K 线动作。
+- 回测/调参里"调到赚钱"的边界不变：实盘模拟的盈亏同样不代表未来。

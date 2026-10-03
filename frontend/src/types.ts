@@ -758,6 +758,33 @@ export type PaperAutomation = {
   updated_at: string | null;
 };
 
+export type PaperLiveTrade = {
+  candle_time: string;
+  signal: string | null;
+  side: string;
+  quantity: string;
+  order_id: string | null;
+  filled_price: string;
+  created_at: string;
+};
+
+export type PaperLiveConfig = {
+  enabled: boolean;
+  venue_id: string;
+  symbol: string;
+  interval: string;
+  strategy_id: string;
+  strategy_parameters: Record<string, string | number | null>;
+  allocation_ratio: string;
+  last_candle_time: string | null;
+  last_signal: string | null;
+  last_tick_at: string | null;
+  last_order_id: string | null;
+  trade_count: number;
+  updated_at: string | null;
+  recent_trades: PaperLiveTrade[];
+};
+
 export type PaperFollowConfig = {
   enabled: boolean;
   interval_seconds: number;
