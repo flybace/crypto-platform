@@ -67,7 +67,7 @@ class PaperStrategyRunRequest(BaseModel):
     allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
     momentum_threshold_pct: Decimal = Field(default=Decimal("0.02"), ge=0, le=10)
     strategy_parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
-    news_gate: bool = Field(default=False, description="风险新闻门控:风险事件发布后 N 小时内拦截新开仓(只做多头拦截,不拦截离场)")
+    news_gate: bool = Field(default=False, description="风险新闻门控:风险事件发布后按建议时长拦截新开仓(只拦截多头开仓,不拦截离场)")
 
     @model_validator(mode="after")
     def validate_windows(self) -> "PaperStrategyRunRequest":
@@ -132,14 +132,22 @@ def _risk_news_events(request: Request, *, symbol: str) -> tuple[dict[str, objec
         symbols = {str(value).upper() for value in event.get("symbols", [])}
         if symbols and normalized not in symbols:
             continue
+        topics = [str(value) for value in event.get("topics", [])]
         selected.append({
             "published_at": event.get("published_at"),
             "symbols": sorted(symbols),
             "sentiment": event.get("sentiment"),
             "risk_level": event.get("risk_level"),
             "title": event.get("title"),
+            "suggested_duration_hours": _suggested_duration(topics),
         })
     return tuple(selected)
+
+
+def _suggested_duration(topics: list[str]) -> int:
+    from backend.app.services import news_intel
+
+    return news_intel.suggested_duration_hours(topics)
 
 
 @router.get("/follow")

@@ -604,7 +604,13 @@ export type NewsAdvice = {
   symbol: string;
   action: string;
   action_text: string;
+  urgency: string;
+  urgency_text: string;
+  suggested_duration_hours: number;
+  position_guidance: string;
+  strategy_notes: Record<string, string>;
   reason: string;
+  evidence: string[];
   impact_score: number;
   heat: number;
   published_at: string;

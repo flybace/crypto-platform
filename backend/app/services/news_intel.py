@@ -280,6 +280,72 @@ _ADVICE_TEXT = {
     "observe": "继续观察",
 }
 
+# 策略原型: strategy_id -> archetype
+STRATEGY_ARCHETYPES: dict[str, str] = {
+    "sma_cross": "trend", "macd_reversal": "trend", "trend_breakout": "trend",
+    "momentum": "momentum", "volume_momentum": "momentum", "volatility_breakout": "momentum",
+    "rsi_rebound": "mean_reversion", "bollinger_breakout": "mean_reversion",
+    "buy_and_hold": "passive", "inventory_exit": "passive",
+}
+
+_ARCHETYPE_LABEL = {
+    "trend": "趋势跟踪",
+    "momentum": "动量",
+    "mean_reversion": "均值回归",
+    "passive": "被动持有",
+}
+
+# 分策略建议话术: action -> archetype -> note
+_STRATEGY_NOTES: dict[str, dict[str, str]] = {
+    "avoid_new_entries": {
+        "trend": "消息冲击期趋势信号失真率高,假突破多;已有仓位按原止损纪律执行,不加仓。",
+        "momentum": "暂停追涨追跌;消息驱动的跳空行情滑点大,动量信号滞后容易买在情绪顶点。",
+        "mean_reversion": "谨慎抄底;风险事件后波动率放大,均值回归的入场点位可能继续下移,等波动率收敛再看。",
+        "passive": "持有观察;事件影响消退前不做调仓,避免在恐慌中卖出。",
+    },
+    "watch_long_signals": {
+        "trend": "可关注做多信号,但等第一波情绪释放、价格站稳后再入场,不追第一根大阳线。",
+        "momentum": "动量确认后再跟随;利好兑现时常有'买预期卖事实'的回踩,分批为宜。",
+        "mean_reversion": "利好环境下超卖反弹胜率较高,可按原计划执行,但仓位不宜超过常规。",
+        "passive": "维持定投/持有节奏;重大利好不是加仓理由,按既定计划执行。",
+    },
+    "observe": {
+        "trend": "维持原信号体系;无明确方向时不为消息加戏。",
+        "momentum": "维持原信号体系;中性消息不改变动量结构。",
+        "mean_reversion": "维持原信号体系;按技术位执行即可。",
+        "passive": "无操作;继续持有。",
+    },
+}
+
+_POSITION_GUIDANCE = {
+    "avoid_new_entries": "不开新仓;已有仓位收紧止损,不加仓不抄底",
+    "watch_long_signals": "可按计划建仓,单笔仓位不超常规,分批入场",
+    "observe": "维持原计划,不因该消息调整仓位",
+}
+
+# 建议持续时长(小时):按事件类别
+_CATEGORY_DURATION_HOURS: dict[str, int] = {
+    "hack": 72, "regulation": 72, "macro": 48, "etf": 48,
+    "listing": 24, "whale": 24, "upgrade": 24,
+}
+
+
+def suggested_duration_hours(topics: Iterable[str]) -> int:
+    """建议的行动持续时长(小时);取类别中最长的一个,默认 48。"""
+    durations = [_CATEGORY_DURATION_HOURS.get(str(topic).lower(), 0) for topic in topics]
+    return max(durations) if any(durations) else 48
+
+
+def urgency_for(sentiment: str, impact: int) -> str:
+    if sentiment == "risk" and impact >= 80:
+        return "high"
+    if sentiment == "risk" or impact >= 65:
+        return "medium"
+    return "low"
+
+
+_URGENCY_TEXT = {"high": "高", "medium": "中", "low": "低"}
+
 
 def is_major(cluster: dict[str, object]) -> bool:
     impact = int(cluster.get("impact_score", 0))  # type: ignore[arg-type]
@@ -289,12 +355,12 @@ def is_major(cluster: dict[str, object]) -> bool:
 
 
 def advise_cluster(cluster: dict[str, object]) -> list[dict[str, object]]:
-    """One advice record per affected symbol (or MARKET when unmapped)."""
+    """One detailed advice record per affected symbol (or MARKET when unmapped)."""
     sentiment = str(cluster.get("sentiment", "neutral"))
     impact = int(cluster.get("impact_score", 0))  # type: ignore[arg-type]
     title = str(cluster.get("title", ""))
-    topics = cluster.get("topics", [])
-    category = str(topics[0]) if topics else "general"  # type: ignore[index]
+    topics = [str(topic) for topic in (cluster.get("topics", []) or [])]
+    category = topics[0] if topics else "general"
     symbols = cluster.get("symbols") or ["MARKET"]  # type: ignore[assignment]
     if sentiment == "risk":
         action = "avoid_new_entries"
@@ -302,13 +368,29 @@ def advise_cluster(cluster: dict[str, object]) -> list[dict[str, object]]:
         action = "watch_long_signals"
     else:
         action = "observe"
+    urgency = urgency_for(sentiment, impact)
+    duration_hours = suggested_duration_hours(topics)
+    strategy_notes = {
+        _ARCHETYPE_LABEL[archetype]: note
+        for archetype, note in _STRATEGY_NOTES[action].items()
+    }
+    evidence = [
+        str(member.get("title", ""))
+        for member in (cluster.get("members", []) or [])  # type: ignore[union-attr]
+    ][:5]
     advice = []
     for symbol in symbols:  # type: ignore[union-attr]
         advice.append({
             "symbol": symbol,
             "action": action,
             "action_text": _ADVICE_TEXT[action],
+            "urgency": urgency,
+            "urgency_text": _URGENCY_TEXT[urgency],
+            "suggested_duration_hours": duration_hours,
+            "position_guidance": _POSITION_GUIDANCE[action],
+            "strategy_notes": strategy_notes,
             "reason": f"[{category}] {title[:90]}",
+            "evidence": evidence,
             "impact_score": impact,
             "heat": int(cluster.get("heat", 1)),  # type: ignore[arg-type]
             "published_at": cluster.get("published_at"),

@@ -20,6 +20,22 @@ const provider = reactive(loadProvider());
 const providerSaved = ref(false);
 const testing = ref(false);
 const testResult = ref('');
+const providerPreset = ref('custom');
+
+const PRESETS: Record<string, { endpoint: string; model: string }> = {
+  deepseek: { endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
+  custom: { endpoint: '', model: '' },
+};
+
+const applyPreset = () => {
+  const preset = PRESETS[providerPreset.value];
+  if (!preset) return;
+  // 只填地址和模型,不碰用户已填的 Key
+  if (providerPreset.value !== 'custom') {
+    provider.endpoint = preset.endpoint;
+    if (!provider.model) provider.model = preset.model;
+  }
+};
 
 const saveProviderConfig = () => {
   saveProvider(provider);
@@ -102,10 +118,11 @@ onMounted(load);
       <section class="assistant-panel invoke-panel" aria-labelledby="invoke-title"><header class="section-heading"><div><p class="kicker">READ-ONLY INVOCATION</p><h2 id="invoke-title">调用预览</h2></div><LockKeyhole :size="18" class="section-icon" /></header><label class="assistant-field"><span>当前 Action</span><select v-model="selectedAction"><option v-for="action in actions" :key="action.id" :value="action.id">{{ action.id }}</option></select></label><label class="assistant-field"><span>查询周期</span><select v-model="interval"><option value="1h">1 小时</option><option value="1d">1 日</option><option value="5m">5 分钟</option></select></label><button class="invoke-button" type="button" :disabled="invoking || !selectedAction" @click="invoke"><RefreshCw v-if="invoking" :size="15" class="spinning" /><Play v-else :size="15" /><span>{{ invoking ? '调用中' : '执行只读 Action' }}</span></button><div v-if="result" class="invoke-result"><header><strong>返回结果</strong><span>{{ result.status }} · {{ result.action }}</span></header><pre>{{ JSON.stringify(result.result, null, 2) }}</pre></div><div v-else class="invoke-empty"><CircleAlert :size="20" /><span>选择能力后执行一次只读查询</span></div></section>
     </section>
     <section class="assistant-panel invocation-panel"><header class="section-heading"><div><p class="kicker">MODEL GATEWAY</p><h2>模型接入</h2></div><KeyRound :size="18" class="section-icon" /></header>
-      <p class="provider-note">接入你自己的 OpenAI 兼容网关(如本地 sub2api),用于新闻 AI 解读。配置只保存在<strong>本机浏览器</strong>,前端直连网关,Key 不经过服务端。</p>
-      <label class="assistant-field"><span>网关地址(带 /v1)</span><input v-model="provider.endpoint" placeholder="http://127.0.0.1:3000/v1" /></label>
+      <p class="provider-note">接入你自己的 OpenAI 兼容网关(如本地 sub2api)或 DeepSeek 官方接口,用于新闻 AI 解读。配置只保存在<strong>本机浏览器</strong>,前端直连网关,Key 不经过服务端。</p>
+      <label class="assistant-field"><span>预设</span><select v-model="providerPreset" @change="applyPreset"><option value="deepseek">DeepSeek 官方 (api.deepseek.com)</option><option value="custom">自定义 OpenAI 兼容网关 (如本地 sub2api)</option></select></label>
+      <label class="assistant-field"><span>网关地址(带 /v1)</span><input v-model="provider.endpoint" placeholder="https://api.deepseek.com/v1" /></label>
       <label class="assistant-field"><span>API Key</span><input v-model="provider.apiKey" type="password" placeholder="sk-..." autocomplete="off" /></label>
-      <label class="assistant-field"><span>模型名</span><input v-model="provider.model" placeholder="gpt-4o-mini" /></label>
+      <label class="assistant-field"><span>模型名</span><input v-model="provider.model" placeholder="deepseek-chat" /></label>
       <div class="provider-actions"><button class="invoke-button provider-btn" type="button" @click="saveProviderConfig"><span>{{ providerSaved ? '已保存' : '保存配置' }}</span></button><button class="invoke-button provider-btn ghost" type="button" :disabled="testing" @click="runTest"><RefreshCw v-if="testing" :size="15" class="spinning" /><span>{{ testing ? '测试中' : '测试连接' }}</span></button></div>
       <div v-if="testResult" class="provider-result">{{ testResult }}</div>
     </section>

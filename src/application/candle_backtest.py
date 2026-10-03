@@ -271,7 +271,8 @@ def _news_block_windows(
     """Build (start, end) block windows from risk news events.
 
     A window starts at the event's ``published_at`` (never before it, so the
-    replay cannot peek into the future) and lasts ``block_hours``.
+    replay cannot peek into the future) and lasts the event's
+    ``suggested_duration_hours`` when present, else ``block_hours``.
     """
     windows: list[tuple[datetime, datetime]] = []
     for event in news_events:
@@ -284,7 +285,12 @@ def _news_block_windows(
             continue
         if published.tzinfo is None:
             published = published.replace(tzinfo=timezone.utc)
-        windows.append((published, published + timedelta(hours=block_hours)))
+        try:
+            duration = int(event.get("suggested_duration_hours") or block_hours)
+        except (TypeError, ValueError):
+            duration = block_hours
+        duration = max(1, min(duration, 24 * 30))
+        windows.append((published, published + timedelta(hours=duration)))
     return tuple(windows)
 
 

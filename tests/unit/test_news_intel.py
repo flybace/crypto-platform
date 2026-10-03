@@ -90,11 +90,29 @@ def test_advise_cluster_risk_blocks_entries():
         "impact_score": 95,
         "heat": 3,
         "published_at": datetime.now(UTC).isoformat(),
+        "members": [{"title": "Major exchange hacked, withdrawals halted"}],
     }
     advice = news_intel.advise_cluster(cluster)
     assert len(advice) == 2
     assert all(item["action"] == "avoid_new_entries" for item in advice)
     assert all(item["action_text"] == "暂停新开仓" for item in advice)
+    first = advice[0]
+    assert first["urgency"] == "high"
+    assert first["urgency_text"] == "高"
+    assert first["suggested_duration_hours"] == 72  # hack 类别
+    assert "不开新仓" in first["position_guidance"]
+    assert set(first["strategy_notes"]) == {"趋势跟踪", "动量", "均值回归", "被动持有"}
+    assert first["evidence"] == ["Major exchange hacked, withdrawals halted"]
+
+
+def test_suggested_duration_and_urgency():
+    assert news_intel.suggested_duration_hours(["hack"]) == 72
+    assert news_intel.suggested_duration_hours(["listing"]) == 24
+    assert news_intel.suggested_duration_hours([]) == 48
+    assert news_intel.urgency_for("risk", 85) == "high"
+    assert news_intel.urgency_for("risk", 60) == "medium"
+    assert news_intel.urgency_for("positive", 90) == "medium"
+    assert news_intel.urgency_for("neutral", 30) == "low"
 
 
 def test_rank_symbols_weights_recent_and_signed():

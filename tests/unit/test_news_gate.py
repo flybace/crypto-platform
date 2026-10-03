@@ -115,6 +115,18 @@ def test_news_gate_ignores_non_risk_events() -> None:
     assert gated.orders == plain.orders
 
 
+def test_news_gate_uses_event_suggested_duration() -> None:
+    candles = make_candles(CLOSES)
+    # 事件自带建议时长 96h,覆盖配置的 720h:首个开仓被拦截,窗口后恢复。
+    event = risk_event(candles[0].open_time)
+    event["suggested_duration_hours"] = 96
+    gated = run(
+        momentum_config(news_gate=True, news_block_hours=24 * 30), candles, [event],
+    )
+    assert gated.news_blocked_entries > 0
+    assert gated.orders > 0
+
+
 def test_news_gate_window_expires() -> None:
     candles = make_candles(CLOSES)
     # Block only the first 24h; entries after the window must go through.
