@@ -208,7 +208,7 @@ const fmtPct = (v: number | null) =>
 .section-heading h2 { margin: 4px 0 0; font-size: 15px; }
 .muted { color: var(--dim); font-size: 12px; margin: 0; }
 .backtest-field { display: grid; gap: 6px; font-size: 12px; color: var(--muted); }
-.backtest-field select, .backtest-field input { min-height: 36px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; background: #13191b; color: var(--ink); font-size: 12px; }
+.backtest-field select, .backtest-field input { min-height: 36px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; background: var(--input-bg); color: var(--ink); font-size: 12px; }
 .grid-inputs { display: grid; gap: 10px; }
 .backtest-submit { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border: 1px solid var(--cyan); border-radius: 6px; background: rgba(108,229,208,.1); color: var(--cyan); cursor: pointer; font-size: 13px; }
 .backtest-submit:disabled { opacity: .5; cursor: not-allowed; }

@@ -236,7 +236,7 @@ onMounted(loadData);
 .parameter-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
 .parameter-heading small { color: var(--dim); font-size: 9px; letter-spacing: .08em; }
 .backtest-field { display: grid; gap: 7px; min-width: 0; color: var(--muted); font-size: 11px; }
-.backtest-field input, .backtest-field select { width: 100%; min-height: 38px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; color: var(--ink); background: #13191b; outline: none; }
+.backtest-field input, .backtest-field select { width: 100%; min-height: 38px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; color: var(--ink); background: var(--input-bg); outline: none; }
 .backtest-field input:focus, .backtest-field select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .backtest-field small { color: var(--dim); font-size: 10px; line-height: 1.5; }
 .backtest-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

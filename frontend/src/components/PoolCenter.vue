@@ -126,7 +126,7 @@ onMounted(loadPools);
 .pool-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 13px; }
 .pool-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
 .pool-form label.wide { grid-column: span 2; }
-.pool-form input, .pool-form select { min-height: 37px; width: 100%; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.pool-form input, .pool-form select { min-height: 37px; width: 100%; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .pool-form input:focus, .pool-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .compact-button { align-self: end; min-height: 37px; border-color: var(--cyan); color: #11201e; background: var(--cyan); font-weight: 720; }
 .compact-button:hover:not(:disabled) { background: #94f0df; }

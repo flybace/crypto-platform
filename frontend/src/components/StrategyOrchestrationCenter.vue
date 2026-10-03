@@ -287,7 +287,7 @@ onMounted(load);
 .orchestration-form { display: grid; gap: 13px; }
 .orchestration-form label, fieldset { display: grid; gap: 6px; min-width: 0; }
 .orchestration-form label > span, legend { color: var(--muted); font-size: 10px; }
-.orchestration-form input, .orchestration-form select { width: 100%; min-height: 36px; border: 1px solid var(--line-bright); border-radius: 4px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; font-size: 11px; }
+.orchestration-form input, .orchestration-form select { width: 100%; min-height: 36px; border: 1px solid var(--line-bright); border-radius: 4px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; font-size: 11px; }
 .orchestration-form input:focus, .orchestration-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 fieldset { margin: 0; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); }
@@ -296,7 +296,7 @@ legend { padding: 0; }
 .dataset-options { grid-template-columns: 1fr; }
 .check-option { display: flex !important; grid-template-columns: none !important; align-items: start; gap: 7px !important; min-height: 27px; color: var(--muted); cursor: pointer; font-size: 10px; }
 .check-option input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.check-box { display: grid; place-items: center; flex: 0 0 auto; width: 16px; height: 16px; border: 1px solid var(--line-bright); color: transparent; background: #13191b; }
+.check-box { display: grid; place-items: center; flex: 0 0 auto; width: 16px; height: 16px; border: 1px solid var(--line-bright); color: transparent; background: var(--input-bg); }
 .check-option input:checked + .check-box { border-color: var(--cyan); color: #11201e; background: var(--cyan); }
 .check-option input:focus-visible + .check-box { outline: 2px solid var(--cyan); outline-offset: 2px; }
 .check-option small { display: block; margin-top: 3px; color: var(--dim); font: 9px Consolas, monospace; }

@@ -281,14 +281,14 @@ onMounted(loadData);
 .automation-panel { display: grid; gap: 15px; }
 .automation-form { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(150px, .8fr) auto auto auto; gap: 10px; align-items: end; }
 .automation-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
-.automation-form input, .automation-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.automation-form input, .automation-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .automation-form input:focus, .automation-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .automation-check { display: inline-flex !important; align-items: center; gap: 7px !important; min-height: 37px; white-space: nowrap; }
 .automation-check input { width: 16px; min-height: 16px; accent-color: var(--cyan); }
 .strategy-replay-panel { display: grid; gap: 15px; }
 .replay-form { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(180px, .8fr) auto; gap: 12px; align-items: end; }
 .replay-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
-.replay-form input, .replay-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.replay-form input, .replay-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .strategy-history { padding-bottom: 14px; }
 .strategy-run-list { display: grid; border-top: 1px solid var(--line); }
 .strategy-run-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 18px; min-height: 53px; border-bottom: 1px solid var(--line); }
@@ -315,7 +315,7 @@ onMounted(loadData);
 .venue-account footer strong { color: var(--amber); font-weight: 500; }
 .paper-form { display: grid; gap: 13px; }
 .paper-form label { display: grid; gap: 7px; color: var(--muted); font-size: 11px; }
-.paper-form input, .paper-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: #13191b; outline: none; }
+.paper-form input, .paper-form select { width: 100%; min-height: 37px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .paper-form input:focus, .paper-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .paper-submit { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 39px; border: 1px solid var(--cyan); border-radius: 5px; color: #11201e; background: var(--cyan); font-size: 12px; font-weight: 720; }
 .paper-submit:hover:not(:disabled) { background: #94f0df; }

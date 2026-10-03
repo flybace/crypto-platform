@@ -396,7 +396,7 @@ onUnmounted(() => {
 .market-heading { margin-bottom: 0; }
 .market-controls { display: flex; align-items: end; gap: 14px; padding: 18px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .market-control { display: grid; gap: 7px; min-width: 150px; color: var(--muted); font-size: 11px; }
-.market-control select { min-height: 38px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; color: var(--ink); background: #13191b; }
+.market-control select { min-height: 38px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 8px 10px; color: var(--ink); background: var(--input-bg); }
 .market-read-note { display: inline-flex; align-items: center; gap: 7px; margin-left: auto; padding-bottom: 10px; color: var(--dim); font-size: 10px; }
 .market-read-note svg { color: var(--amber); }
 .opportunity-button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; margin-left: 10px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 6px 9px; color: var(--muted); background: transparent; font-size: 10px; }
@@ -485,7 +485,7 @@ onUnmounted(() => {
 .spread-form-row-main { grid-template-columns: minmax(130px, 1fr) 18px minmax(130px, 1fr) minmax(110px, .7fr); }
 .spread-form-row-costs { grid-template-columns: repeat(3, minmax(110px, 1fr)) minmax(150px, 1.2fr); }
 .spread-form label { display: grid; gap: 7px; color: var(--muted); font-size: 10px; }
-.spread-form input, .spread-form select { width: 100%; min-height: 36px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 7px 9px; color: var(--ink); background: #13191b; outline: none; }
+.spread-form input, .spread-form select { width: 100%; min-height: 36px; border: 1px solid var(--line-bright); border-radius: 5px; padding: 7px 9px; color: var(--ink); background: var(--input-bg); outline: none; }
 .spread-form input:focus, .spread-form select:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(108, 229, 208, .1); }
 .spread-arrow { align-self: center; margin-top: 18px; color: var(--amber); }
 .spread-submit { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; border: 1px solid var(--cyan); border-radius: 5px; color: #11201e; background: var(--cyan); font-size: 11px; font-weight: 700; }
