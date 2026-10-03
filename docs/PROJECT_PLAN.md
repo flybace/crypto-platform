@@ -3285,9 +3285,10 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 新增 `backend/app/services/paper_live.py::PaperLiveService`：实盘模拟循环。每 tick 取最新 K 线，用 `CandleBacktestEngine.signal_at` 计算最新收盘 K 线的策略信号（不偷看未来），按信号翻仓：BUY 且空仓 → 按 `allocation_ratio` 比例用 quote 余额买入；SELL 且持仓 → 全平。经 `PaperTradingService.submit` 走模拟撮合，只写模拟账本。
 - 幂等：每根 K 线最多交易一次（`last_candle_time`）；订单 request_id 按 `paper-live:{venue}:{symbol}:{interval}:{candle}:{side}` 确定性生成，重试不重复下单。
 - 调度器（`src/services/task_scheduler.py`）：历史同步 `up_to_date` 后自动跑一轮 `tick()`；失败只记 warning，不影响主流程。默认关闭，用户在模拟盘页显式启用。
+- **2026-10-04 架构修正（用户纠正）**：用户指出其 A 股量化逻辑是"策略启动→自动下单"，策略应独立运行而非挂靠历史同步。改为策略为中心：后端 `main.py` lifespan 启动策略引擎后台任务，每 60 秒独立 tick 一次（`asyncio.to_thread` 避免阻塞事件循环，异常只记日志不崩溃）；调度器彻底解耦（删除 `_maybe_run_paper_live` 及 PaperLiveService 构造），回归只做历史同步+新闻。前端面板改为显式「启动策略/停止策略」按钮（替代复选框），状态区显示运行中/已停止。
 - API：`GET /paper/live`、`PUT /paper/live`（配置）、`POST /paper/live/run`（手动执行一次）。
 - 前端模拟盘页新增「实盘模拟」面板：市场/品种/周期/策略/参数/仓位比例、启用开关、保存配置、立即执行一次、状态（上次执行/信号/累计下单）与最近成交表。
-- 运维：Binance 在本机被地理封锁、Bybit 403，调度器改为 `--venues okx` 只同步 OKX（否则全局退避导致自动循环不触发）；setup.sh 待同步该改动。
+- 运维：Binance 在本机被地理封锁、Bybit 403，调度器改为 `--venues okx --intervals 1h,1d` 只同步 OKX（否则全局退避导致自动循环不触发；5m 周期因每 5 分钟一根新线永远到不了 up_to_date）；setup.sh 与 launch-all.sh 已同步该改动。调度器退避状态存在 PostgreSQL `control_domain_snapshots`（key `crypto.runtime.history-scheduler`），改 JSON 文件无效。
 
 验证：
 - 单测 `tests/unit/test_paper_live.py` 16 passed（信号→订单决策表、每 K 线只交易一次、确定性 request_id、配置校验）；全量 unit+integration 332 passed。
