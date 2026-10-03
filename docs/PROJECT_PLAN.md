@@ -3217,3 +3217,25 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 全量回归：unit + integration 299 passed；前端 `npm run build` 成功。
 - 真实链路：手动回放 `macd_reversal(fast=8, slow=26, signal=7)` 完成，记录含参数；跟盯一次，快照含 `{"fast":"8","signal":"7","slow":"26"}`。验证后跟盯与自动回放均恢复关闭。
 - Playwright 截图：`crypto-shots/29-模拟盘完善-回放参数.png`、`30-模拟盘完善-回放详情.png`、`31-模拟盘完善-跟盯详情.png`。
+
+### 31.40 2026-10-03 新闻智能第一层：RSS 接入 + 规则智能 + 选币榜 + 策略建议 + 回放门控 + AI 接入
+
+分支：`codex/news-intel`。
+
+做了什么：
+- RSS 自动接入：CoinDesk / CoinTelegraph RSS + alternative.me 恐惧贪婪指数，无需 key；scheduler 每 15 分钟自动抓取（`NewsIngestor`，失败不影响 tick），重大事件写 WARNING 日志；`POST /api/v1/news/ingest/run` 可手动触发。
+- 规则智能（`backend/app/services/news_intel.py`，无 LLM、确定性、可审计）：品种映射（关键词 + `$BTC` 标签，18 个主流币）、分类（hack/regulation/etf/macro/listing/whale/upgrade 带权重）、加密词典情绪打分（-1~+1）、影响分（热度×情绪极端度×分类权重）、跨来源聚类（标题相似度≥0.5 合并，heat=报道家数）、重大判定（影响≥65 且 heat≥2，或 risk 且影响≥60）。
+- 策略建议：`GET /api/v1/news/advice`，每条重大事件按品种生成机器可读建议（暂停新开仓 / 关注做多信号 / 继续观察 + 原因）。
+- 消息面选币榜：`GET /api/v1/news/ranking`，72h 按品种加权聚合新闻分与情绪方向。
+- 回放新闻门控：`CandleBacktestConfig.news_gate` + `news_block_hours`；引擎按事件 `published_at` 建阻断窗口（只看过去、不偷看未来），风险窗口内拦截新开仓、不拦截离场；结果含 `news_blocked_entries`；API `POST /paper/strategy-runs` 新增 `news_gate` 参数（直连与 worker 两条链路都透传事件快照）。
+- AI 接入（前端直连）：`frontend/src/ai/provider.ts`，OpenAI 兼容网关（本地 sub2api），配置存本机浏览器 localStorage，Key 不经过服务端；AI 能力页新增"模型接入"面板（保存 + 测试连接）；新闻事件行新增"AI 解读"按钮，调用户网关生成一句话解读 + 品种影响 + 策略建议。
+
+验证：
+- 单元测试：`tests/unit/test_news_intel.py` 10 passed（映射/分类/情绪/聚类/重大/建议/选币榜）；`tests/unit/test_news_gate.py` 5 passed（拦截/不拦离场/忽略未来事件/忽略非风险/窗口过期）。
+- 全量回归：unit + integration 314 passed；`compileall` 通过；前端 `npm run build` 成功。
+- 真实链路：真实 RSS 抓取 51 条入库 0 错误；选币榜正确识别 NEAR 被黑事件（risk，3 家报道）；重大建议生成正常；sma_cross 在 BTC/USDT 1h 上关门控 12 笔、开门控 6 笔/拦截 3 次；scheduler 重启后自动抓取并告警 6 个重大事件。
+- Playwright 截图：`crypto-shots/32-新闻智能-选币榜.png`、`33-AI能力-模型接入.png`、`34-模拟盘-新闻门控.png`。
+
+边界：
+- 规则智能不懂语义，情绪词典精度有限；真正的语义解读走用户自备网关（第二层）。
+- 新闻仍不直接下单（执行 DISABLED）；门控默认关闭，需用户在回放时显式开启。

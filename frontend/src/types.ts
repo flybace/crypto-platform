@@ -600,6 +600,31 @@ export type StrategyMatrixSummary = {
   items: StrategyMatrix[];
 };
 
+export type NewsAdvice = {
+  symbol: string;
+  action: string;
+  action_text: string;
+  reason: string;
+  impact_score: number;
+  heat: number;
+  published_at: string;
+  title: string;
+  topics: string[];
+  sentiment: string;
+  sources: string[];
+};
+
+export type NewsRankingItem = {
+  symbol: string;
+  score: number;
+  direction: 'positive' | 'neutral' | 'risk' | string;
+  heat: number;
+  positive: number;
+  risk: number;
+  top_title: string;
+  top_impact: number;
+};
+
 export type NewsEvent = {
   event_id: string;
   event_key: string;

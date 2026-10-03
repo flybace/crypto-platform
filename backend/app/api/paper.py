@@ -67,6 +67,7 @@ class PaperStrategyRunRequest(BaseModel):
     allocation_ratio: Decimal = Field(default=Decimal("1"), gt=0, le=1)
     momentum_threshold_pct: Decimal = Field(default=Decimal("0.02"), ge=0, le=10)
     strategy_parameters: dict[str, Any] = Field(default_factory=dict, max_length=40)
+    news_gate: bool = Field(default=False, description="风险新闻门控:风险事件发布后 N 小时内拦截新开仓(只做多头拦截,不拦截离场)")
 
     @model_validator(mode="after")
     def validate_windows(self) -> "PaperStrategyRunRequest":
@@ -113,6 +114,32 @@ class PaperFollowRequest(BaseModel):
 
 def _service(request: Request):
     return request.app.state.paper_trading
+
+
+def _risk_news_events(request: Request, *, symbol: str) -> tuple[dict[str, object], ...]:
+    """Fetch risk-level news events relevant to a symbol for the news gate.
+
+    Returns a point-in-time snapshot; the replay engine additionally filters
+    by each candle's time so the replay never peeks into the future.
+    """
+    normalized = str(symbol or "").strip().upper()
+    try:
+        events = request.app.state.news_service.events(sentiment="risk", limit=200)
+    except Exception:
+        return ()
+    selected = []
+    for event in events:
+        symbols = {str(value).upper() for value in event.get("symbols", [])}
+        if symbols and normalized not in symbols:
+            continue
+        selected.append({
+            "published_at": event.get("published_at"),
+            "symbols": sorted(symbols),
+            "sentiment": event.get("sentiment"),
+            "risk_level": event.get("risk_level"),
+            "title": event.get("title"),
+        })
+    return tuple(selected)
 
 
 @router.get("/follow")
@@ -259,7 +286,11 @@ def run_strategy(payload: PaperStrategyRunRequest, request: Request, _: object =
             allocation_ratio=payload.allocation_ratio,
             momentum_threshold_pct=payload.momentum_threshold_pct,
             parameters=payload.strategy_parameters,
+            news_gate=payload.news_gate,
         )
+        news_events: tuple[dict[str, object], ...] = ()
+        if payload.news_gate:
+            news_events = _risk_news_events(request, symbol=payload.symbol)
         dispatcher = request.app.state.task_dispatcher
         if dispatcher.enabled:
             run_id = dispatcher.run_id()
@@ -273,6 +304,7 @@ def run_strategy(payload: PaperStrategyRunRequest, request: Request, _: object =
                     "interval": payload.interval,
                     "strategy_id": payload.strategy_id,
                     "config": dispatcher.config_payload(config),
+                    "news_events": [dict(event) for event in news_events],
                 },
                 task_id=TaskDispatcher.task_id("paper_strategy", run_id),
             )
@@ -282,6 +314,7 @@ def run_strategy(payload: PaperStrategyRunRequest, request: Request, _: object =
             symbol=payload.symbol,
             interval=payload.interval,
             config=config,
+            news_events=news_events,
         )
     except TaskDispatchError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error

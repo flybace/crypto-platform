@@ -113,6 +113,7 @@ class PaperTradingService:
         config: CandleBacktestConfig,
         run_id: str | None = None,
         record_task: bool = True,
+        news_events: tuple[dict[str, object], ...] = (),
     ) -> dict[str, object]:
         venue = self._venue(venue_id)
         normalized_symbol = self._symbol(symbol)
@@ -133,6 +134,7 @@ class PaperTradingService:
             config=config,
             run_id=str(run_id or f"paper-replay-{uuid4().hex}"),
             dataset_id=dataset.manifest.dataset_id,
+            news_events=news_events,
         ).as_dict()
         now = datetime.now(UTC).isoformat()
         record = {

@@ -121,6 +121,8 @@ class TaskDispatcher:
             "allocation_ratio": str(config.allocation_ratio),
             "momentum_threshold_pct": str(config.momentum_threshold_pct),
             "strategy_parameters": dict(config.parameters),
+            "news_gate": bool(getattr(config, "news_gate", False)),
+            "news_block_hours": int(getattr(config, "news_block_hours", 48)),
         }
 
     def dispatch(
