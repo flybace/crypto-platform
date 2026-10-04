@@ -443,3 +443,87 @@ class TestPaperLiveManager:
         svc_b = mgr.get_instance(b["instance_id"])
         assert svc_a is not svc_b
         assert svc_a._paper is not svc_b._paper
+
+
+class _PathlessStore:
+    """模拟生产环境的 SqlStateStore：支持 save/load，但没有 .path 属性。"""
+
+    def __init__(self):
+        self._payload = None
+
+    def load(self, default):
+        from copy import deepcopy
+        return deepcopy(self._payload) if self._payload is not None else deepcopy(default)
+
+    def save(self, payload):
+        from copy import deepcopy
+        self._payload = deepcopy(payload)
+
+
+class TestPaperLivePersistProdlike:
+    """生产环境 state_store 没有 .path（SqlStateStore），实例运行时状态
+    必须经由 instance_state_store_factory 落盘，否则 VM 重置后风控失忆
+    （entry_price / day_start_equity 丢失 → 止损与单日亏损停牌 silently 失效）。"""
+
+    def _make_prodlike(self):
+        from backend.app.services.paper_live import PaperLiveManager
+        manager_store = _PathlessStore()
+        instance_stores: dict = {}
+
+        def factory(instance_id):
+            store = _PathlessStore()
+            instance_stores[instance_id] = store
+            return store
+
+        def paper_factory(instance_id):
+            return _FakePaper({"BTC": "0", "USDT": "10000"})
+
+        mgr = PaperLiveManager(
+            strategies=_FakeStrategies(),
+            storage=_FakeStorage(_candles(200)),
+            state_store=manager_store,
+            paper_factory=paper_factory,
+            instance_state_store_factory=factory,
+        )
+        return mgr, manager_store, instance_stores
+
+    def _rebuild(self, manager_store, instance_stores):
+        from backend.app.services.paper_live import PaperLiveManager
+
+        def paper_factory(instance_id):
+            return _FakePaper({"BTC": "0", "USDT": "10000"})
+
+        return PaperLiveManager(
+            strategies=_FakeStrategies(),
+            storage=_FakeStorage(_candles(200)),
+            state_store=manager_store,
+            paper_factory=paper_factory,
+            instance_state_store_factory=lambda iid: instance_stores[iid],
+        )
+
+    def test_tick_runtime_state_survives_restart(self, signal_script):
+        signal_script.value = "BUY"
+        mgr, manager_store, instance_stores = self._make_prodlike()
+        inst = mgr.create_instance({
+            "venue_id": "binance", "symbol": "BTC/USDT", "interval": "1h",
+            "enabled": True,
+        })
+        iid = inst["instance_id"]
+
+        results = mgr.tick_all()
+        assert results[0]["status"] == "traded"
+
+        payload = instance_stores[iid]._payload
+        assert payload is not None, "实例运行时状态必须落盘，不能只活在内存里"
+        assert payload["live"]["entry_price"] is not None
+        assert payload["live"]["day_start_equity"] is not None
+        assert payload["live"]["last_candle_time"] is not None
+        assert len(payload["trades"]) == 1
+
+        # 模拟 VM 重置/后端重启：用同一批 store 重建 manager
+        mgr2 = self._rebuild(manager_store, instance_stores)
+        cfg = mgr2.get_instance(iid).get_config()
+        assert cfg["entry_price"] == payload["live"]["entry_price"]
+        assert cfg["day_start_equity"] == payload["live"]["day_start_equity"]
+        assert cfg["last_candle_time"] == payload["live"]["last_candle_time"]
+        assert cfg["trade_count"] == 1

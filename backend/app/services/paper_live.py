@@ -535,20 +535,27 @@ class PaperLiveManager:
         state_store: StateStore | None = None,
         paper_factory=None,
         regime_service=None,
+        instance_state_store_factory=None,
     ) -> None:
         self._strategies = strategies
         self._storage = storage
         self._state = state_store
         self._paper_factory = paper_factory  # (instance_id) -> PaperTradingService
         self._regime = regime_service
+        # (instance_id) -> StateStore：实例运行时状态的持久化位置。
+        # 生产环境的 state_store 是 SqlStateStore（没有 .path），无法再从
+        # manager 路径派生实例文件，必须由调用方显式提供。
+        self._instance_state_factory = instance_state_store_factory
         self._instances: dict[str, PaperLiveService] = {}
         self._lock = RLock()
         self._load()
 
     def _instance_state_store(self, instance_id: str) -> StateStore | None:
+        if self._instance_state_factory is not None:
+            return self._instance_state_factory(instance_id)
         if self._state is None or not hasattr(self._state, "path"):
             return None
-        # 从 manager 的 state 路径派生实例路径
+        # 从 manager 的 state 路径派生实例路径（仅 JsonStateStore 可用）
         base = self._state.path
         return JsonStateStore(str(base).replace("paper-live-manager.json", f"paper-live-{instance_id}.json"))
 

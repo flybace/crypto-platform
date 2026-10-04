@@ -429,6 +429,12 @@ def create_app(
         state_store=domain_state("paper-live-manager.json"),
         paper_factory=_paper_factory,
         regime_service=market_regime,
+        # 实例运行时状态（entry_price / day_start_equity / last_candle_time…）
+        # 必须落盘：云机随时重置，只活在内存里等于风控失忆。
+        # SqlStateStore 没有 .path，manager 无法自行派生实例路径，故显式传入。
+        instance_state_store_factory=lambda instance_id: domain_state(
+            f"paper-live-{instance_id}.json"
+        ),
     )
     # 迁移旧单实例：首次运行时把 paper-live.json 导入为默认实例
     if not paper_live_manager.list_instances():
