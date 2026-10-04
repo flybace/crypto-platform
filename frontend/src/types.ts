@@ -772,6 +772,8 @@ export type PaperLiveConfig = {
   enabled: boolean;
   venue_id: string;
   symbol: string;
+  pool_id: string | null;
+  parent_pool_id: string | null;
   interval: string;
   strategy_id: string;
   strategy_parameters: Record<string, string | number | null>;

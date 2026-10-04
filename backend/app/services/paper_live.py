@@ -40,6 +40,8 @@ DEFAULT_LIVE: dict[str, Any] = {
     "enabled": False,
     "venue_id": "binance",
     "symbol": "BTC/USDT",
+    "pool_id": None,              # 币池实例：选用交易池后按池成分逐币运行
+    "parent_pool_id": None,       # 池子实例：归属的父实例 id（自动生成，不可手动设置）
     "interval": "1h",
     "strategy_id": "macd_reversal",
     "strategy_parameters": {"fast": 8, "slow": 26, "signal": 7},
@@ -251,6 +253,8 @@ class PaperLiveService:
             config = deepcopy(self._config)
         if not config["enabled"]:
             return {"status": "disabled"}
+        if config.get("pool_id"):
+            return {"status": "pool_parent", "detail": "pool members run as child instances"}
         self._strategies.assert_enabled(str(config["strategy_id"]), "paper")
         venue = str(config["venue_id"]).strip().lower()
         symbol = str(config["symbol"]).strip().upper()
@@ -455,7 +459,7 @@ class PaperLiveService:
             raise ValueError("venue_id must be binance, okx, or bybit")
         if str(config.get("interval", "")).strip() not in {"1d", "1h", "5m"}:
             raise ValueError("interval must be 1d, 1h, or 5m")
-        if "/" not in str(config.get("symbol", "")):
+        if not config.get("pool_id") and "/" not in str(config.get("symbol", "")):
             raise ValueError("symbol must look like BTC/USDT")
         if not str(config.get("strategy_id", "")).strip():
             raise ValueError("strategy_id must not be empty")
@@ -536,12 +540,14 @@ class PaperLiveManager:
         paper_factory=None,
         regime_service=None,
         instance_state_store_factory=None,
+        coin_pool_service=None,
     ) -> None:
         self._strategies = strategies
         self._storage = storage
         self._state = state_store
         self._paper_factory = paper_factory  # (instance_id) -> PaperTradingService
         self._regime = regime_service
+        self._coin_pools = coin_pool_service
         # (instance_id) -> StateStore：实例运行时状态的持久化位置。
         # 生产环境的 state_store 是 SqlStateStore（没有 .path），无法再从
         # manager 路径派生实例文件，必须由调用方显式提供。
@@ -608,6 +614,12 @@ class PaperLiveManager:
 
     def create_instance(self, values: dict[str, Any]) -> dict[str, Any]:
         import uuid
+        pool_id = values.get("pool_id")
+        if pool_id:
+            # 门禁：只有已确认的交易池能被策略实例选用
+            if self._coin_pools is None:
+                raise ValueError("coin pool service is unavailable")
+            self._coin_pools.assert_tradable(str(pool_id))
         instance_id = f"live-{uuid.uuid4().hex[:8]}"
         with self._lock:
             svc = self._build_instance(instance_id)
@@ -616,6 +628,81 @@ class PaperLiveManager:
             self._instances[instance_id] = svc
             self._persist_locked()
             return {"instance_id": instance_id, **svc.get()}
+
+    @staticmethod
+    def _child_instance_id(parent_id: str, symbol: str) -> str:
+        sanitized = str(symbol).upper().replace("/", "_").replace("-", "_")
+        return f"{parent_id}__{sanitized}"
+
+    def _sync_pool_children(self, parent_id: str, parent_config: dict[str, Any]) -> list[str]:
+        """按币池当前成分同步子实例：新增成分建子实例，掉出成分的停用。
+
+        每个子实例有独立模拟账户，与多策略实例隔离原则一致。
+        """
+        if self._coin_pools is None:
+            return []
+        pool_id = str(parent_config.get("pool_id") or "").strip()
+        if not pool_id:
+            return []
+        try:
+            pool = self._coin_pools.get(pool_id)
+        except Exception:
+            return []
+        if pool is None or pool.get("role") != "trading":
+            return []
+        members = [str(s).upper() for s in pool.get("current_members", [])]
+        wanted = {self._child_instance_id(parent_id, symbol) for symbol in members}
+        synced: list[str] = []
+        with self._lock:
+            # 新增：为每个池成分创建子实例（继承父实例的策略与风控参数）
+            for symbol in members:
+                child_id = self._child_instance_id(parent_id, symbol)
+                if child_id in self._instances:
+                    continue
+                child = self._build_instance(child_id)
+                child_config = {
+                    k: v for k, v in parent_config.items()
+                    if k in DEFAULT_LIVE and k not in {
+                        "last_candle_time", "last_signal", "last_tick_at",
+                        "last_order_id", "trade_count", "entry_price",
+                        "day_start_equity", "risk_halt_until", "last_risk_event",
+                        "pool_id",
+                    }
+                }
+                child_config["symbol"] = symbol
+                child_config["pool_id"] = None
+                child_config["parent_pool_id"] = parent_id
+                child_config["enabled"] = bool(parent_config.get("enabled"))
+                try:
+                    child.update(child_config)
+                except ValueError:
+                    continue
+                self._instances[child_id] = child
+                synced.append(child_id)
+            # 掉出成分的子实例：停用（保留持仓记录，不自动删）
+            for child_id, child_svc in list(self._instances.items()):
+                cfg = child_svc.get_config()
+                if cfg.get("parent_pool_id") == parent_id and child_id not in wanted:
+                    if cfg.get("enabled"):
+                        try:
+                            child_svc.update({"enabled": False})
+                        except ValueError:
+                            pass
+            self._persist_locked()
+        return synced
+
+    def _sync_all_pool_children(self) -> None:
+        with self._lock:
+            parents = [
+                (iid, svc.get_config())
+                for iid, svc in self._instances.items()
+                if svc.get_config().get("pool_id")
+            ]
+        for parent_id, parent_config in parents:
+            try:
+                self._sync_pool_children(parent_id, parent_config)
+            except Exception:
+                continue
 
     def update_instance(self, instance_id: str, values: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -630,6 +717,13 @@ class PaperLiveManager:
         with self._lock:
             if instance_id not in self._instances:
                 raise KeyError(f"instance not found: {instance_id}")
+            # 级联删除该池父实例的子实例
+            children = [
+                iid for iid, svc in self._instances.items()
+                if svc.get_config().get("parent_pool_id") == instance_id
+            ]
+            for child_id in children:
+                del self._instances[child_id]
             del self._instances[instance_id]
             self._persist_locked()
 
@@ -656,6 +750,7 @@ class PaperLiveManager:
 
     def tick_all(self) -> list[dict[str, Any]]:
         """对所有启用的实例各跑一轮。引擎每 60 秒调用一次。"""
+        self._sync_all_pool_children()
         results = []
         with self._lock:
             instances = list(self._instances.items())

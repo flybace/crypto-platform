@@ -3451,3 +3451,45 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 - 集成到总览页顶部，原基础设施指标保留在下方。
 
 验证：前端构建通过；Playwright 截图验证。
+
+### 31.51 2026-10-04 动态币池：规则池 + 候选/交易权限分层 + 策略实例选池
+
+背景：用户 2026-10-03 提出“继续搞币池”，方向已确认为：
+行情 → 筛选 → 候选池 → 人工确认 → 交易池 → 策略实例 → 模拟下单。
+
+实现（分支 `codex/coin-pools`）：
+- 后端 `CoinPoolService`（`backend/app/services/coin_pools.py`）：
+  - 三种类型：static（手动）、top_volume（24h 成交额 TopN）、low_volatility（近 7 天低波动）。
+  - 权限分层：新池一律从候选池（candidate）开始，只能研究/回测；人工 `confirm` 后升级为交易池（trading）；可随时 `demote` 降级。
+  - 动态池按 `refresh_interval_seconds`（默认 3600s）自动刷新，引擎循环每 60s 检查到期。
+  - 每次刷新保存成分快照（最多 200）；`composition_at(as_of)` 返回时间点成分，回测引用防未来函数。
+- API `/api/v1/coin-pools`：list/create/get/refresh/confirm/demote/composition/delete。
+- 策略实例选池：`PaperLiveManager.create_instance` 校验 `assert_tradable`（候选池拒绝）；
+  池父实例每轮 tick 按当前成分同步子实例（新增建、掉出停用），子实例各有独立模拟账户；
+  删除父实例级联删除子实例。
+- 前端：币池页新增「动态币池」板块（创建/刷新/确认/降级/删除/成分/快照）；
+  模拟盘添加实例表单支持「币池（逐币运行）」模式，只能选已确认的交易池。
+
+验证：9 个新单元测试通过；全量 464 通过（1 个失败为基线已存在，与本次无关）；
+前端构建通过；Playwright 端到端验证。
+
+### 31.52 2026-10-04 一键安装脚本（install.sh / install.ps1）
+
+背景：用户要求“把安装脚本做到 GitHub 上，直接运行脚本自动拉取代码”。
+
+实现（分支 `codex/installer`，已合并推送到 main `0171d26`）：
+- `install.sh`（Linux/macOS）：支持 `curl ... | bash` 管道自举——不在仓库内时自动
+  `git clone --depth 1` 到 `~/crypto-platform` 再重执行仓库内版本；在仓库内运行则 `git pull`。
+  检查 Docker/Compose 插件；不存在才生成 `.env`（随机管理员密码+session secret+PG 密码，
+  监听 127.0.0.1，EXECUTION_MODE=DISABLED）；`docker compose up -d --build`；
+  轮询后端 /health 最多 3 分钟；打印访问地址和账号（随机密码仅显示一次）。
+  重复运行 = 更新。
+- `install.ps1`（Windows）：同等流程的 PowerShell 版本（Docker Desktop）。
+- `uninstall.sh`：`docker compose down` 保留数据；`--purge` 二次确认后连数据卷删除。
+- `.env.example`：配置模板；README 顶部加一键安装说明。
+- 与云机 `setup.sh` 分工：setup.sh 继续当开发云机的看门狗灾后重建工具，不混用。
+
+验证：bash -n 语法通过；自举 clone 逻辑在 /tmp 实测通过；
+本机无 Docker 未做完整安装实测（云机也不应做部署，见 AGENTS.md）。
+注意：本机出口代理导致 raw.githubusercontent.com 全 404（含已存在文件），
+无法从云机验证一键 URL，git push 本身成功，需用户侧自行验证。

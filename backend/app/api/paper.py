@@ -14,6 +14,7 @@ from application.candle_backtest import CandleBacktestConfig
 from application.history_storage import HistoryStorageError
 
 from ..auth.dependencies import require_user
+from ..services.coin_pools import CoinPoolError
 from ..services.paper_follow import PaperFollowService, execute_paper_follow
 from ..services.task_dispatcher import TaskDispatchError, TaskDispatcher
 
@@ -80,6 +81,7 @@ class PaperAutomationRequest(BaseModel):
     enabled: bool = False
     venue_id: str = Field(default="binance", min_length=1, max_length=32)
     symbol: str = Field(default="BTC/USDT", min_length=2, max_length=32)
+    pool_id: str | None = Field(default=None, max_length=64, description="选用交易币池时填，逐币运行")
     interval: Literal["1d", "1h", "5m"] = "1h"
     strategy_id: str = Field(default="sma_cross", min_length=1, max_length=64)
     initial_quote: Decimal = Field(default=Decimal("10000"), gt=0)
@@ -258,7 +260,7 @@ def create_live_instance(
                 )
         # enabled 默认为 False，用户在前端点"启动策略"
         return manager.create_instance(data)
-    except ValueError as error:
+    except (ValueError, CoinPoolError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 

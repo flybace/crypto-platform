@@ -36,6 +36,7 @@ from .api.incubators import router as incubators_router  # noqa: E402
 from .api.notifications import router as notifications_router  # noqa: E402
 from .api.paper import router as paper_router  # noqa: E402
 from .api.pools import router as pools_router  # noqa: E402
+from .api.coin_pools import router as coin_pools_router  # noqa: E402
 from .api.risk import router as risk_router  # noqa: E402
 from .api.research import router as research_router  # noqa: E402
 from .api.screening import router as screening_router  # noqa: E402
@@ -60,6 +61,7 @@ from .services.history_scheduler_state import HistorySchedulerState  # noqa: E40
 from .services.history_sync import HistorySyncService  # noqa: E402
 from .services.instrument_catalog import InstrumentCatalogService  # noqa: E402
 from .services.public_tickers import PublicTickerService  # noqa: E402
+from .services.coin_pools import CoinPoolService  # noqa: E402
 from .services.notifications import NotificationService  # noqa: E402
 from .services.opportunity_log import OpportunityLogService  # noqa: E402
 from .services.news import NewsService  # noqa: E402
@@ -227,6 +229,11 @@ def create_app(
         runtime_history_service.storage,
         state_store=domain_state("pools.json"),
     )
+    coin_pool_service = CoinPoolService(
+        state_store=domain_state("coin-pools.json"),
+        ticker_service=runtime_ticker_service,
+        history_storage=runtime_history_service.storage,
+    )
     screening_service = ScreeningService(
         runtime_history_service.storage,
         pool_catalog,
@@ -323,6 +330,7 @@ def create_app(
     )
     app.state.instrument_catalog = runtime_instrument_catalog
     app.state.public_tickers = runtime_ticker_service
+    app.state.coin_pools = coin_pool_service
     # Read-only account foundation (M5): secret provider + Binance gateway.
     # Gateway is only created when credentials are configured; otherwise the
     # account API reports unconfigured instead of failing silently.
@@ -429,6 +437,7 @@ def create_app(
         state_store=domain_state("paper-live-manager.json"),
         paper_factory=_paper_factory,
         regime_service=market_regime,
+        coin_pool_service=coin_pool_service,
         # 实例运行时状态（entry_price / day_start_equity / last_candle_time…）
         # 必须落盘：云机随时重置，只活在内存里等于风控失忆。
         # SqlStateStore 没有 .path，manager 无法自行派生实例路径，故显式传入。
@@ -467,6 +476,9 @@ def create_app(
         """
         while True:
             try:
+                refreshed = await asyncio.to_thread(coin_pool_service.refresh_due_pools)
+                if refreshed:
+                    paper_live_logger.info("coin pools refreshed: %s", [p["pool_id"] for p in refreshed])
                 outcomes = await asyncio.to_thread(paper_live_manager.tick_all)
                 for outcome in outcomes:
                     status = outcome.get("status") if isinstance(outcome, dict) else "?"
@@ -512,6 +524,7 @@ def create_app(
     app.include_router(system_router)
     app.include_router(settings_router)
     app.include_router(pools_router)
+    app.include_router(coin_pools_router)
     app.include_router(screening_router)
     app.include_router(paper_router)
     app.include_router(strategy_funnel_router)
