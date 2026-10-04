@@ -7,6 +7,12 @@
 # 或在已克隆的仓库里直接运行：
 #   ./install.sh
 #
+# 私有仓库：先在 GitHub 生成只读 token（Fine-grained，Contents: Read-only，
+# 仅勾选本仓库），然后：
+#   export GITHUB_TOKEN=你的token
+#   curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+#     https://raw.githubusercontent.com/flybace/crypto-platform/main/install.sh | bash
+#
 # 重复运行 = 更新：git pull + 重新构建启动。
 # 环境变量（可选）：
 #   CRYPTO_INSTALL_DIR    安装目录（默认 ~/crypto-platform）
@@ -25,14 +31,29 @@ log() { printf '\033[1;34m[install]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[install] 错误：\033[0m %s\n' "$*" >&2; exit 1; }
 
 # ---------- 1. 自举：不在仓库里就先拉代码 ----------
+git_clone() {
+  # 私有仓库用 token 鉴权；extraHeader 不会把 token 存进 .git/config
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git -c "http.extraHeader=Authorization: Bearer ${GITHUB_TOKEN}" clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  else
+    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  fi
+}
+git_pull() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git -C "$INSTALL_DIR" -c "http.extraHeader=Authorization: Bearer ${GITHUB_TOKEN}" pull --ff-only
+  else
+    git -C "$INSTALL_DIR" pull --ff-only
+  fi
+}
 if [ ! -f "./compose.yaml" ] || [ ! -d "./.git" ]; then
   command -v git >/dev/null 2>&1 || die "需要先安装 git：https://git-scm.com/downloads"
   if [ ! -d "$INSTALL_DIR/.git" ]; then
     log "拉取代码到 $INSTALL_DIR ..."
-    git clone --depth 1 "$REPO_URL" "$INSTALL_DIR" || die "git clone 失败，请检查网络"
+    git_clone || die "git clone 失败。私有仓库请先 export GITHUB_TOKEN=只读token 再运行（见脚本头部说明）"
   else
     log "更新代码 ..."
-    git -C "$INSTALL_DIR" pull --ff-only || log "git pull 失败，继续用本地代码安装"
+    git_pull || log "git pull 失败，继续用本地代码安装"
   fi
   # 重新执行仓库内的正式脚本（避免管道中的副本与仓库版本不一致）
   if [ "$0" != "$INSTALL_DIR/install.sh" ]; then
@@ -41,7 +62,11 @@ if [ ! -f "./compose.yaml" ] || [ ! -d "./.git" ]; then
   cd "$INSTALL_DIR"
 else
   # 已在仓库内：顺手更新到最新
-  git pull --ff-only 2>/dev/null || true
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git -c "http.extraHeader=Authorization: Bearer ${GITHUB_TOKEN}" pull --ff-only 2>/dev/null || true
+  else
+    git pull --ff-only 2>/dev/null || true
+  fi
 fi
 
 cd "$(dirname "$0")"

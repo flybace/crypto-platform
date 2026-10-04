@@ -14,6 +14,25 @@ curl -fsSL https://raw.githubusercontent.com/flybace/crypto-platform/main/instal
 irm https://raw.githubusercontent.com/flybace/crypto-platform/main/install.ps1 | iex
 ```
 
+> **私有仓库**：本仓库是私有的，直接拉取会 401。先在 GitHub 生成一个**只读** token：
+> Settings → Developer settings → Personal access tokens → Fine-grained tokens →
+> 权限只勾 `Contents: Read-only`，Repository access 只选 `flybace/crypto-platform`。
+> 然后带上 token 运行：
+>
+> ```bash
+> # Linux / macOS
+> export GITHUB_TOKEN=你的token
+> curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+>   https://raw.githubusercontent.com/flybace/crypto-platform/main/install.sh | bash
+> ```
+> ```powershell
+> # Windows
+> $env:GITHUB_TOKEN = "你的token"
+> irm -Headers @{Authorization="Bearer $env:GITHUB_TOKEN"} `
+>   https://raw.githubusercontent.com/flybace/crypto-platform/main/install.ps1 | iex
+> ```
+> token 只用来拉代码，不会写进 `.git/config` 或 `.env`。
+
 脚本会自动拉取代码、生成配置、构建启动。装好后打开 http://127.0.0.1:4191 ，用户名和随机密码会打印在终端里（仅显示一次）。
 
 - 重复运行脚本 = 更新到最新版
