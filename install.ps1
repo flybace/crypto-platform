@@ -6,6 +6,12 @@
 # 或在已克隆的仓库里：
 #   .\install.ps1
 #
+# 私有仓库：先在 GitHub 生成只读 token（Fine-grained，Contents: Read-only，
+# 仅勾选本仓库），然后：
+#   $env:GITHUB_TOKEN = "你的token"
+#   irm -Headers @{{Authorization="Bearer $env:GITHUB_TOKEN"}} `
+#     https://raw.githubusercontent.com/flybace/crypto-platform/main/install.ps1 | iex
+#
 # 重复运行 = 更新。
 $ErrorActionPreference = "Stop"
 
@@ -19,12 +25,15 @@ function Log($msg) { Write-Host "[install] $msg" -ForegroundColor Blue }
 $inRepo = (Test-Path ".\compose.yaml") -and (Test-Path ".\.git")
 if (-not $inRepo) {
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "需要先安装 git：https://git-scm.com/downloads" }
+  $gitAuth = @()
+  if ($env:GITHUB_TOKEN) { $gitAuth = @("-c", "http.extraHeader=Authorization: Bearer $($env:GITHUB_TOKEN)") }
   if (-not (Test-Path "$InstallDir\.git")) {
     Log "拉取代码到 $InstallDir ..."
-    git clone --depth 1 $RepoUrl $InstallDir
+    & git @gitAuth clone --depth 1 $RepoUrl $InstallDir
+    if ($LASTEXITCODE -ne 0) { throw "git clone 失败。私有仓库请先 `$env:GITHUB_TOKEN='只读token' 再运行（见脚本头部说明）" }
   } else {
     Log "更新代码 ..."
-    git -C $InstallDir pull --ff-only 2>$null
+    & git -C $InstallDir @gitAuth pull --ff-only 2>$null
   }
   $me = Join-Path $InstallDir "install.ps1"
   if ($PSCommandPath -ne $me) { & $me; exit $LASTEXITCODE }
