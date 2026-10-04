@@ -64,11 +64,22 @@ const followRunning = ref(false);
 const liveInstances = ref<PaperLiveInstance[]>([]);
 const editingInstanceId = ref<string | null>(null);
 const marketRegime = ref<{ regime: string; score: number; factor: number; blocks_new_positions: boolean; reason: string } | null>(null);
+const tradingPools = ref<{ pool_id: string; name: string; venue_id: string; current_members: string[] }[]>([]);
+const usePool = ref(false);
+const loadTradingPools = async () => {
+  try {
+    const { data } = await api.get<{ items: any[] }>('/coin-pools', { params: { role: 'trading' } });
+    tradingPools.value = data.items;
+  } catch { tradingPools.value = []; }
+};
+const poolName = (poolId: string | null) => tradingPools.value.find((p) => p.pool_id === poolId)?.name || poolId || '';
 const showLiveEditor = ref(false);
 const liveForm = ref<PaperLiveConfig>({
   enabled: false,
   venue_id: 'binance',
   symbol: 'BTC/USDT',
+  pool_id: null,
+  parent_pool_id: null,
   interval: '1h',
   strategy_id: 'macd_reversal',
   strategy_parameters: { fast: 8, slow: 26, signal: 7 },
@@ -364,6 +375,8 @@ const blankLiveForm = (): PaperLiveConfig => ({
   enabled: false,
   venue_id: 'binance',
   symbol: 'BTC/USDT',
+  pool_id: null,
+  parent_pool_id: null,
   interval: '1h',
   strategy_id: 'macd_reversal',
   strategy_parameters: { fast: 8, slow: 26, signal: 7 },
@@ -385,6 +398,7 @@ const blankLiveForm = (): PaperLiveConfig => ({
 const startNewInstance = () => {
   editingInstanceId.value = null;
   liveForm.value = blankLiveForm();
+  usePool.value = false;
   onLiveStrategyChange();
   showLiveEditor.value = true;
 };
@@ -411,6 +425,7 @@ const saveLive = async () => {
   liveSaving.value = true;
   error.value = '';
   notice.value = '';
+  if (!usePool.value) liveForm.value.pool_id = null;
   try {
     if (editingInstanceId.value) {
       const { data } = await api.put<PaperLiveInstance>(`/paper/live/instances/${editingInstanceId.value}`, liveForm.value);
@@ -581,7 +596,7 @@ const resetAccount = async (venueId?: string) => {
   }
 };
 
-onMounted(loadData);
+onMounted(() => { loadData(); loadTradingPools(); });
 </script>
 
 <template>
@@ -613,7 +628,7 @@ onMounted(loadData);
           <tbody>
             <tr v-for="inst in liveInstances" :key="inst.instance_id">
               <td>{{ inst.venue_id }}</td>
-              <td>{{ inst.symbol }}</td>
+              <td><span v-if="inst.pool_id" class="pool-tag">币池 · {{ poolName(inst.pool_id) }}</span><span v-else>{{ inst.symbol }}</span><span v-if="inst.parent_pool_id" class="child-tag">池子实例</span></td>
               <td>{{ inst.interval }}</td>
               <td>{{ inst.strategy_id }}</td>
               <td><strong :class="inst.enabled ? 'positive' : ''">{{ inst.enabled ? '运行中' : '已停止' }}</strong></td>
@@ -644,7 +659,9 @@ onMounted(loadData);
       <div v-if="showLiveEditor" class="automation-form">
         <h3 style="margin: 0 0 8px;">{{ editingInstanceId ? '编辑策略' : '新策略' }}</h3>
         <label><span>市场</span><select v-model="liveForm.venue_id"><option value="binance">Binance</option><option value="okx">OKX</option><option value="bybit">Bybit</option></select></label>
-        <label><span>品种</span><input v-model="liveForm.symbol" placeholder="BTC/USDT" /></label>
+        <label><span>标的类型</span><select v-model="usePool"><option :value="false">单一品种</option><option :value="true">币池（逐币运行）</option></select></label>
+        <label v-if="!usePool"><span>品种</span><input v-model="liveForm.symbol" placeholder="BTC/USDT" /></label>
+        <label v-else><span>交易币池</span><select v-model="liveForm.pool_id"><option :value="null">请选择已确认的交易池</option><option v-for="pool in tradingPools" :key="pool.pool_id" :value="pool.pool_id">{{ pool.name }}（{{ pool.current_members.length }}币）</option></select></label>
         <label><span>周期</span><select v-model="liveForm.interval"><option value="5m">5 分钟</option><option value="1h">1 小时</option><option value="1d">1 日</option></select></label>
         <label><span>策略</span><select v-model="liveForm.strategy_id" @change="onLiveStrategyChange"><option v-for="strategy in strategies" :key="strategy.strategy_id" :value="strategy.strategy_id">{{ strategy.name }}</option></select></label>
         <div v-if="liveParameterFields.length" class="replay-params">
@@ -838,4 +855,7 @@ onMounted(loadData);
 .regime-score, .regime-factor { color: var(--muted); font-size: 12px; }
 .regime-block { color: #f0433a; font-weight: 700; }
 .regime-reason { color: var(--dim); font-size: 11px; margin-left: auto; }
+
+.pool-tag { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 10px; background: rgba(33,150,243,.12); color: #2196f3; border: 1px solid rgba(33,150,243,.35); }
+.child-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; font-size: 10px; border-radius: 8px; background: rgba(128,128,128,.12); color: var(--dim); }
 </style>

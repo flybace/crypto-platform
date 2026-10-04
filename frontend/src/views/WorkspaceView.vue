@@ -40,6 +40,7 @@ import StrategyCenter from '../components/StrategyCenter.vue';
 import NewsCenter from '../components/NewsCenter.vue';
 import BacktestCenter from '../components/BacktestCenter.vue';
 import PoolCenter from '../components/PoolCenter.vue';
+import CoinPoolCenter from '../components/CoinPoolCenter.vue';
 import ScreeningCenter from '../components/ScreeningCenter.vue';
 import PaperTradingCenter from '../components/PaperTradingCenter.vue';
 import RiskCenter from '../components/RiskCenter.vue';
@@ -206,7 +207,10 @@ onMounted(loadOverview);
          <NewsCenter v-else-if="activeSection === 'news'" @go-assistant="activeSection = 'assistant'" />
          <AdviceCenter v-else-if="activeSection === 'advice'" />
          <BacktestCenter v-else-if="activeSection === 'backtests'" />
-         <PoolCenter v-else-if="activeSection === 'pools'" />
+         <div v-else-if="activeSection === 'pools'" class="pools-stack">
+          <CoinPoolCenter />
+          <PoolCenter />
+        </div>
          <ScreeningCenter v-else-if="activeSection === 'screening'" @open-backtest="activeSection = 'backtests'" @open-incubator="activeSection = 'incubator'" />
          <StrategyIncubatorCenter v-else-if="activeSection === 'incubator'" @open-research="activeSection = 'research'" />
          <PaperTradingCenter v-else-if="activeSection === 'paper'" />
