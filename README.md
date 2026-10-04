@@ -1,5 +1,26 @@
 # Crypto Multi-Market Quant Platform
 
+## 一键安装
+
+先装好 [Docker](https://docs.docker.com/get-docker/)（Windows 用 Docker Desktop），然后一条命令：
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/flybace/crypto-platform/main/install.sh | bash
+```
+
+```powershell
+# Windows（PowerShell）
+irm https://raw.githubusercontent.com/flybace/crypto-platform/main/install.ps1 | iex
+```
+
+脚本会自动拉取代码、生成配置、构建启动。装好后打开 http://127.0.0.1:4191 ，用户名和随机密码会打印在终端里（仅显示一次）。
+
+- 重复运行脚本 = 更新到最新版
+- 停止：`docker compose stop`；卸载：`./uninstall.sh`（`--purge` 连数据一起删）
+- 执行模式默认 `DISABLED`，真实下单强制关闭
+
+
 独立的数字资产多市场行情、价差研究、回测、模拟交易与受控交易系统。
 
 本项目与 D:/code/quant-platform、D:/code/gace-system、D:/code/gace-build-center 保持源码、数据库、运行环境和发布边界隔离。源码在 Windows `D:/code/crypto-platform`，运行目标为独立 Ubuntu `10.10.10.129`（用户 `flybace`）；项目可以独立运行，也从第一天保留未来生成 GACE App 所需的适配层和合同。
