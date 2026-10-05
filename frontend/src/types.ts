@@ -770,6 +770,7 @@ export type PaperLiveTrade = {
 
 export type PaperLiveConfig = {
   enabled: boolean;
+  auto_trading: boolean;
   venue_id: string;
   symbol: string;
   pool_id: string | null;

@@ -119,7 +119,7 @@ async function toggleTrading() {
   if (!trading.value) return;
   const next = !trading.value.auto_trading_enabled;
   const label = next ? '启用' : '关闭';
-  if (!confirm(`确定要${label}自动交易吗？${next ? '启用后策略才允许提交真实订单（M6 未实现前无实际下单能力）。' : ''}`)) return;
+  if (!confirm(`确定要${label}自动交易吗？${next ? '启用后，策略实例的自动交易开关也打开时，信号会自动下模拟单（真实执行仍关闭）。' : '关闭后，所有策略立即停止自动下单，只记录信号。'}`)) return;
   toggling.value = true;
   try {
     const res = await api.put('/settings/trading', { enabled: next });
@@ -267,7 +267,7 @@ onMounted(refresh);
 
     <div class="panel">
       <h3>自动交易开关</h3>
-      <p class="muted">自动交易必须在这里显式打开才会生效，默认关闭。当前 M6 真实下单尚未实现，打开此开关不会产生任何真实订单。</p>
+      <p class="muted">自动交易总开关，默认关闭。打开后，还需在模拟盘为每个策略单独开启自动交易，两者同时打开，策略信号才会自动下模拟单。真实执行保持关闭。</p>
       <label class="switch-row">
         <span>自动交易</span>
         <button

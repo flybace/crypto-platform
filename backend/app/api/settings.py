@@ -186,7 +186,9 @@ def trading_settings(request: Request, _: object = Depends(require_user)) -> dic
     store = _trading_store(request)
     return {
         "auto_trading_enabled": store.is_enabled(),
-        "note": "Auto-trading requires explicit enablement here. Trading execution is not yet implemented (M6).",
+        "note": "Global auto-trading switch, default off. Simulated orders are placed "
+        "only when this is on AND the paper-live instance's own auto_trading flag is on. "
+        "Real order execution is not implemented (M6).",
     }
 
 

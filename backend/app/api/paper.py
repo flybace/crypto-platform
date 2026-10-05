@@ -116,6 +116,11 @@ class PaperFollowRequest(BaseModel):
 
 class PaperLiveRequest(BaseModel):
     enabled: bool = False
+    auto_trading: bool = Field(
+        default=False,
+        description="Explicit per-instance auto-trading switch. Effective only "
+        "when the global trading toggle is also enabled.",
+    )
     venue_id: str = Field(default="binance", min_length=1, max_length=32)
     symbol: str = Field(default="BTC/USDT", min_length=2, max_length=32)
     interval: Literal["1d", "1h", "5m"] = "1h"

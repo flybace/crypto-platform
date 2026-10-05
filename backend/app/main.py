@@ -444,6 +444,11 @@ def create_app(
         instance_state_store_factory=lambda instance_id: domain_state(
             f"paper-live-{instance_id}.json"
         ),
+        # 自动交易全局开关：设置页显式开启后才允许实例下单（与实例级开关做与门）
+        auto_trading_checker=lambda: bool(
+            getattr(app.state, "trading_settings_store", None)
+            and app.state.trading_settings_store.is_enabled()
+        ),
     )
     # 迁移旧单实例：首次运行时把 paper-live.json 导入为默认实例
     if not paper_live_manager.list_instances():
