@@ -3493,3 +3493,44 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 本机无 Docker 未做完整安装实测（云机也不应做部署，见 AGENTS.md）。
 注意：本机出口代理导致 raw.githubusercontent.com 全 404（含已存在文件），
 无法从云机验证一键 URL，git push 本身成功，需用户侧自行验证。
+
+### 31.53 2026-10-05 自动交易两级开关（auto-trading gate）
+
+背景：自动交易开关此前只是摆设——`PaperLiveService.tick()` 有信号就直接
+`paper.submit()` 下模拟单，从不检查开关。用户要求"实现自动交易功能，用模拟
+账号测试"。
+
+实现（分支 `codex/auto-trading`，已合并推送到 main）：
+- 两级开关做与门：全局总开关（`TradingSettingsStore`，账户页设置，默认关）
+  × 实例级 `auto_trading`（`DEFAULT_LIVE` 新增，默认 False）。
+  只有两者同时打开，tick 才允许下单。
+- 门禁位置：`tick()` 里 `decide_order()` 之后、`paper.submit()` 之前。
+  未开时返回 `status="held", reason="auto_trading_disabled", held_by="instance"|"global"`，
+  信号照记 `last_signal`，模拟账本不动。止损强制卖同样受门禁——语义统一：
+  开关关 = 引擎不自动下任何单。
+- 注入方式：`PaperLiveService(auto_trading_checker=...)` 可选 callable，
+  未注入默认 False（fail-closed）；`PaperLiveManager` 透传；`main.py` 接入
+  `app.state.trading_settings_store.is_enabled()`。
+- 币池子实例自动继承父实例的 `auto_trading`（`_sync_pool_children` 复制
+  DEFAULT_LIVE 键）。
+- API：`PaperLiveRequest` 新增 `auto_trading: bool = False`；
+  `/settings/trading` 文案更新（不再写"无实际下单能力"）。
+- 前端：实例表新增"自动交易"列（开启/关闭按钮；实例开但总开关未开时提示
+  "总开关未开，不下单"）；编辑器加复选框；账户页总开关文案同步两级语义。
+- 旧实例迁移：state 文件无该键 → `_load` 按 `DEFAULT_LIVE` 补 `False`，
+  现有 live-d029c5f3 复位为关，等用户显式开启。
+
+验证：
+- 7 个新单元测试（tests/unit/test_paper_live.py::TestAutoTradingGate），
+  38/38 通过；全量套件除 1 个基线既有失败（acceptance test_research_api，
+  main 上同样失败，与本次无关）外全过。
+- 真实 `PaperTradingService` 模拟账本端到端脚本：双开+BUY→真实成交
+  （0.197 BTC）；实例关+SELL→held 账本不变；全局关+SELL→held；
+  双开+SELL→平仓。账本余额变化符合预期（含手续费）。
+- 生产 API 实测：全局开关文案、实例 PUT、手动 tick（checker 接线无崩溃）。
+
+注意：Chromium 152（/opt/meta-chromium）在本机硬拦截 localhost 导航
+（ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS），8 种绕法均失败，
+本次前端只做了 vue-tsc 构建 + dev server 代码送达验证，未做浏览器截图。
+另修：`launch-all.sh` 的 kill 模式失效（start 脚本内 exec 导致 cmdline 无
+脚本路径），已改为按服务命令匹配。

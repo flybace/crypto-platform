@@ -1,8 +1,11 @@
 """Explicit auto-trading toggle.
 
 Auto-trading can ONLY be enabled through an explicit user action on the
-settings API. It defaults to disabled and the trading execution path
-(M6, not yet implemented) must check this flag before any order flow.
+settings API. It defaults to disabled. This global switch is ANDed with each
+paper-live instance's own ``auto_trading`` flag: the engine places a simulated
+order only when both are on. When off, the engine still ticks and records
+signals, but never touches the (simulated) account. The real-order execution
+path (M6, not yet implemented) must check this flag as well.
 """
 
 from __future__ import annotations

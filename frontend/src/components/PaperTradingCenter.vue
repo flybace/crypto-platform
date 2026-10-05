@@ -64,6 +64,7 @@ const followRunning = ref(false);
 const liveInstances = ref<PaperLiveInstance[]>([]);
 const editingInstanceId = ref<string | null>(null);
 const marketRegime = ref<{ regime: string; score: number; factor: number; blocks_new_positions: boolean; reason: string } | null>(null);
+const globalAutoTrading = ref<boolean | null>(null);
 const tradingPools = ref<{ pool_id: string; name: string; venue_id: string; current_members: string[] }[]>([]);
 const usePool = ref(false);
 const loadTradingPools = async () => {
@@ -76,6 +77,7 @@ const poolName = (poolId: string | null) => tradingPools.value.find((p) => p.poo
 const showLiveEditor = ref(false);
 const liveForm = ref<PaperLiveConfig>({
   enabled: false,
+  auto_trading: false,
   venue_id: 'binance',
   symbol: 'BTC/USDT',
   pool_id: null,
@@ -253,6 +255,10 @@ const loadData = async () => {
       const { data: regimeData } = await api.get('/market-regime');
       marketRegime.value = regimeData;
     } catch { /* regime optional */ }
+    try {
+      const { data: tradingData } = await api.get<{ auto_trading_enabled: boolean }>('/settings/trading');
+      globalAutoTrading.value = tradingData.auto_trading_enabled;
+    } catch { globalAutoTrading.value = null; }
     liveInstances.value = rawInstances.map((inst) => ({
       ...inst,
       strategy_parameters: Object.fromEntries(
@@ -373,6 +379,7 @@ const runFollow = async () => {
 
 const blankLiveForm = (): PaperLiveConfig => ({
   enabled: false,
+  auto_trading: false,
   venue_id: 'binance',
   symbol: 'BTC/USDT',
   pool_id: null,
@@ -458,10 +465,31 @@ const setInstanceEnabled = async (inst: PaperLiveInstance, enabled: boolean) => 
     const idx = liveInstances.value.findIndex((i) => i.instance_id === inst.instance_id);
     if (idx >= 0) liveInstances.value[idx] = data;
     notice.value = enabled
-      ? '策略已启动：引擎每 60 秒检查一次，有信号自动下单（模拟）'
-      : '策略已停止：不再自动下单';
+      ? '策略已启动：引擎每 60 秒检查一次信号。自动下单需另行开启本策略的"自动交易"开关（且全局总开关也要开）。'
+      : '策略已停止：不再检查信号，也不再自动下单';
   } catch (cause: any) {
     error.value = cause.response?.data?.detail || (enabled ? '策略启动失败' : '策略停止失败');
+  } finally {
+    liveSaving.value = false;
+  }
+};
+
+const setInstanceAutoTrading = async (inst: PaperLiveInstance, autoTrading: boolean) => {
+  liveSaving.value = true;
+  error.value = '';
+  notice.value = '';
+  try {
+    const { data } = await api.put<PaperLiveInstance>(
+      `/paper/live/instances/${inst.instance_id}`,
+      { auto_trading: autoTrading },
+    );
+    const idx = liveInstances.value.findIndex((i) => i.instance_id === inst.instance_id);
+    if (idx >= 0) liveInstances.value[idx] = data;
+    notice.value = autoTrading
+      ? '自动交易已开启：有信号时自动下单（模拟）。注意还需在账户页打开全局自动交易总开关，两者同时打开才生效。'
+      : '自动交易已关闭：引擎只记录信号，不再自动下单（含止损单）';
+  } catch (cause: any) {
+    error.value = cause.response?.data?.detail || (autoTrading ? '自动交易开启失败' : '自动交易关闭失败');
   } finally {
     liveSaving.value = false;
   }
@@ -624,7 +652,7 @@ onMounted(() => { loadData(); loadTradingPools(); });
       <!-- 实例列表 -->
       <div v-if="liveInstances.length" class="order-table-wrap">
         <table class="order-table">
-          <thead><tr><th>市场</th><th>品种</th><th>周期</th><th>策略</th><th>状态</th><th>账户余额</th><th>上次执行</th><th>信号</th><th>下单</th><th>风控</th><th>操作</th></tr></thead>
+          <thead><tr><th>市场</th><th>品种</th><th>周期</th><th>策略</th><th>状态</th><th>自动交易</th><th>账户余额</th><th>上次执行</th><th>信号</th><th>下单</th><th>风控</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="inst in liveInstances" :key="inst.instance_id">
               <td>{{ inst.venue_id }}</td>
@@ -632,6 +660,11 @@ onMounted(() => { loadData(); loadTradingPools(); });
               <td>{{ inst.interval }}</td>
               <td>{{ inst.strategy_id }}</td>
               <td><strong :class="inst.enabled ? 'positive' : ''">{{ inst.enabled ? '运行中' : '已停止' }}</strong></td>
+              <td>
+                <button v-if="!inst.auto_trading" class="secondary-button" type="button" :disabled="liveSaving" @click="setInstanceAutoTrading(inst, true)" title="开启后，有信号时自动下模拟单（还需账户页全局总开关同时打开）">开启</button>
+                <button v-else class="danger-button" type="button" :disabled="liveSaving" @click="setInstanceAutoTrading(inst, false)" title="关闭后，引擎只记录信号，不再自动下单（含止损单）">关闭</button>
+                <div v-if="inst.auto_trading && globalAutoTrading === false" class="muted" style="font-size: 12px; margin-top: 4px;">总开关未开，不下单</div>
+              </td>
               <td class="mono">{{ inst.account ? Object.entries(inst.account.balances).map(([k, v]) => k + ':' + formatNumber(v, k === 'USDT' ? 2 : 6)).join(' ') : '—' }}</td>
               <td class="follow-time">{{ inst.last_tick_at ? formatDate(inst.last_tick_at) : '—' }}</td>
               <td>{{ inst.last_signal || '—' }}</td>
@@ -671,12 +704,13 @@ onMounted(() => { loadData(); loadTradingPools(); });
         <label><span>持仓上限</span><input v-model="liveForm.max_position_ratio" type="number" min="0.01" max="1" step="0.05" title="持仓市值占总权益的最大比例" /></label>
         <label><span>止损 %</span><input v-model="liveForm.stop_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；如 0.05 表示浮亏 5% 强制平仓" /></label>
         <label><span>单日最大亏损 %</span><input v-model="liveForm.daily_max_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；超限则停牌至次日 UTC 0 点" /></label>
+        <label class="automation-check"><input v-model="liveForm.auto_trading" type="checkbox" /><span>自动交易（有信号自动下模拟单；还需账户页全局总开关同时打开，默认关闭）</span></label>
         <button class="secondary-button" type="button" :disabled="liveSaving" @click="saveLive"><Save v-if="!liveSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ liveSaving ? '保存中' : '保存' }}</span></button>
         <button v-if="editingInstanceId" class="secondary-button" type="button" @click="cancelEdit">取消</button>
       </div>
       
       <div v-if="liveResult" class="inline-notice" role="status"><Check :size="14" />{{ liveResult }}</div>
-      <p class="paper-note"><ShieldCheck :size="13" /> 每个策略独立运行、独立账户：引擎每 60 秒轮询所有已启动的策略，各自检查最新已收盘 K 线，有信号自动下单（每根 K 线最多一笔）；只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p>
+      <p class="paper-note"><ShieldCheck :size="13" /> 每个策略独立运行、独立账户：引擎每 60 秒轮询所有已启动的策略，各自检查最新已收盘 K 线（每根 K 线最多一笔）。自动下单需要两级开关同时打开——本策略的"自动交易"和账户页的"自动交易"总开关；任一关闭时引擎只记录信号、不下单（含止损单）。只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p>
     </section>
     <section class="paper-metrics" aria-label="模拟盘摘要"><article><span>模拟净值</span><strong>{{ summary ? formatNumber(summary.equity_quote, 2) : '—' }}</strong><em>USDT</em></article><article><span>基础资产</span><strong>{{ positions.length }}</strong><em>有余额的币种</em></article><article><span>已提交订单</span><strong>{{ summary?.order_count ?? 0 }}</strong><em>模拟撮合记录</em></article><article><span>策略回放</span><strong>{{ summary?.strategy_run_count ?? strategyRuns.length }}</strong><em>历史样本运行</em></article><article><span>费率</span><strong>{{ summary?.fee_bps || '10' }}</strong><em>bps</em></article></section>
 

@@ -38,6 +38,9 @@ from .strategy_registry import StrategyRegistry
 
 DEFAULT_LIVE: dict[str, Any] = {
     "enabled": False,
+    # 自动交易：实例级开关，默认关闭。实际下单还需要全局开关
+    # （TradingSettingsStore）同时打开，两者是与门关系。
+    "auto_trading": False,
     "venue_id": "binance",
     "symbol": "BTC/USDT",
     "pool_id": None,              # 币池实例：选用交易池后按池成分逐币运行
@@ -184,11 +187,15 @@ class PaperLiveService:
         state_path: str | Path | None = None,
         state_store: StateStore | None = None,
         regime_service=None,
+        auto_trading_checker=None,
     ) -> None:
         self._paper = paper
         self._strategies = strategies
         self._storage = storage
         self._regime = regime_service
+        # 全局自动交易开关的读取函数 () -> bool。未注入时默认关闭（fail-closed），
+        # 保证开关语义：不显式接线就不下单。
+        self._auto_trading_checker = auto_trading_checker or (lambda: False)
         self._state = state_store or (JsonStateStore(state_path) if state_path else None)
         self._config = deepcopy(DEFAULT_LIVE)
         self._trades: list[dict[str, Any]] = []
@@ -245,6 +252,21 @@ class PaperLiveService:
             self._config = next_config
             self._persist_locked()
             return self.get()
+
+    def _auto_trading_effective(self) -> tuple[bool, str]:
+        """两级开关是否同时打开。返回 (是否允许下单, 阻挡方)。
+
+        阻挡方: "none"（都开）、"instance"（实例开关未开）、"global"（全局开关未开）。
+        """
+        with self._lock:
+            instance_on = bool(self._config.get("auto_trading"))
+        if not instance_on:
+            return False, "instance"
+        try:
+            global_on = bool(self._auto_trading_checker())
+        except Exception:
+            global_on = False
+        return (True, "none") if global_on else (False, "global")
 
     def tick(self) -> dict[str, Any]:
         """Run one live-loop iteration. Safe to call on every scheduler tick."""
@@ -392,6 +414,19 @@ class PaperLiveService:
             result["reason"] = order_spec["skipped"]
             order_spec = None
         if order_spec is not None:
+            # 自动交易门禁：两级开关（实例级 + 全局）都打开才允许下单。
+            # 未开时只记录信号，不动模拟账户——止损强制卖同样受门禁，
+            # 语义统一：开关关 = 引擎不自动下任何单。
+            allowed, held_by = self._auto_trading_effective()
+            if not allowed:
+                with self._lock:
+                    self._config["last_signal"] = signal
+                    self._persist_locked()
+                result["status"] = "held"
+                result["reason"] = "auto_trading_disabled"
+                result["held_by"] = held_by
+                return result
+        if order_spec is not None:
             side = str(order_spec["side"])
             quantity = _decimal(order_spec["quantity"], "quantity")
             request_id = f"paper-live:{venue}:{symbol}:{interval}:{candle_id}:{side}"
@@ -455,6 +490,8 @@ class PaperLiveService:
     def _validate(config: dict[str, Any]) -> None:
         if not isinstance(config.get("enabled"), bool):
             raise ValueError("enabled must be boolean")
+        if not isinstance(config.get("auto_trading"), bool):
+            raise ValueError("auto_trading must be boolean")
         if str(config.get("venue_id", "")).strip().lower() not in {"binance", "okx", "bybit"}:
             raise ValueError("venue_id must be binance, okx, or bybit")
         if str(config.get("interval", "")).strip() not in {"1d", "1h", "5m"}:
@@ -541,6 +578,7 @@ class PaperLiveManager:
         regime_service=None,
         instance_state_store_factory=None,
         coin_pool_service=None,
+        auto_trading_checker=None,
     ) -> None:
         self._strategies = strategies
         self._storage = storage
@@ -548,6 +586,8 @@ class PaperLiveManager:
         self._paper_factory = paper_factory  # (instance_id) -> PaperTradingService
         self._regime = regime_service
         self._coin_pools = coin_pool_service
+        # 全局自动交易开关读取函数，透传给每个策略实例
+        self._auto_trading_checker = auto_trading_checker
         # (instance_id) -> StateStore：实例运行时状态的持久化位置。
         # 生产环境的 state_store 是 SqlStateStore（没有 .path），无法再从
         # manager 路径派生实例文件，必须由调用方显式提供。
@@ -596,6 +636,7 @@ class PaperLiveManager:
             self._storage,
             state_store=self._instance_state_store(instance_id),
             regime_service=self._regime,
+            auto_trading_checker=self._auto_trading_checker,
         )
         if config:
             # 恢复已保存的配置（不触发校验失败就跳过）

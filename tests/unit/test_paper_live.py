@@ -148,10 +148,17 @@ class _FakeStorage:
         return SimpleNamespace(items=items)
 
 
-def _service(paper, storage, **overrides):
-    service = PaperLiveService(paper, _FakeStrategies(), storage, state_store=None)
+def _service(paper, storage, auto_trading=True, global_trading=True, **overrides):
+    service = PaperLiveService(
+        paper,
+        _FakeStrategies(),
+        storage,
+        state_store=None,
+        auto_trading_checker=lambda: global_trading,
+    )
     config = {
         "enabled": True,
+        "auto_trading": auto_trading,
         "venue_id": "binance",
         "symbol": "BTC/USDT",
         "interval": "1h",
@@ -263,6 +270,97 @@ def test_update_ignores_readonly_fields():
     service.update({"enabled": True, "trade_count": 99, "last_candle_time": "x"})
     assert service.get()["trade_count"] == 0
     assert service.get()["last_candle_time"] is None
+
+
+class TestAutoTradingGate:
+    """自动交易两级开关：实例级 auto_trading × 全局开关，与门才下单。"""
+
+    def test_defaults_off(self):
+        paper = _FakePaper({"BTC": "0", "USDT": "10000"})
+        service = PaperLiveService(
+            paper, _FakeStrategies(), _FakeStorage(_candles(60)),
+            state_store=None, auto_trading_checker=lambda: True,
+        )
+        assert service.get()["auto_trading"] is False
+
+    def test_rejects_non_boolean(self):
+        paper = _FakePaper({"BTC": "0", "USDT": "10000"})
+        service = PaperLiveService(
+            paper, _FakeStrategies(), _FakeStorage(_candles(60)),
+            state_store=None, auto_trading_checker=lambda: True,
+        )
+        with pytest.raises(ValueError):
+            service.update({"auto_trading": "yes"})
+
+    def test_held_when_instance_switch_off(self, signal_script):
+        signal_script.value = "BUY"
+        paper = _FakePaper({"BTC": "0", "USDT": "10000"})
+        service = _service(paper, _FakeStorage(_candles(60)),
+                           auto_trading=False, global_trading=True)
+        result = service.tick()
+        assert result["status"] == "held"
+        assert result["reason"] == "auto_trading_disabled"
+        assert result["held_by"] == "instance"
+        assert paper.submitted == []
+        # 信号照记，下单不动
+        assert service.get()["last_signal"] == "BUY"
+
+    def test_held_when_global_switch_off(self, signal_script):
+        signal_script.value = "BUY"
+        paper = _FakePaper({"BTC": "0", "USDT": "10000"})
+        service = _service(paper, _FakeStorage(_candles(60)),
+                           auto_trading=True, global_trading=False)
+        result = service.tick()
+        assert result["status"] == "held"
+        assert result["held_by"] == "global"
+        assert paper.submitted == []
+
+    def test_trades_when_both_on(self, signal_script):
+        signal_script.value = "BUY"
+        paper = _FakePaper({"BTC": "0", "USDT": "10000"})
+        service = _service(paper, _FakeStorage(_candles(60)),
+                           auto_trading=True, global_trading=True)
+        result = service.tick()
+        assert result["status"] == "traded"
+        assert len(paper.submitted) == 1
+
+    def test_stop_loss_also_held_when_switch_off(self, signal_script):
+        # 止损强制卖同样受门禁：开关关 = 引擎不自动下任何单
+        signal_script.value = None
+        candles = _candles(60)
+        candles[-1].close = Decimal("47000")  # 相对 50000 入场价跌 6%，触发 5% 止损
+        paper = _FakePaper({"BTC": "0.2", "USDT": "0"})
+        service = _service(
+            paper, _FakeStorage(candles),
+            auto_trading=False, global_trading=True,
+            stop_loss_pct="0.05",
+        )
+        # entry_price 是只读运行时字段，update() 不接受，直接写入 config
+        service._config["entry_price"] = "50000"  # noqa: SLF001
+        result = service.tick()
+        assert result["status"] == "held"
+        assert result["signal"] == "SELL"  # 风控已把信号改成止损卖出
+        assert result["held_by"] == "instance"
+        assert paper.submitted == []
+
+    def test_manager_passes_global_checker(self, tmp_path, signal_script):
+        from backend.app.services.paper_live import PaperLiveManager
+        from adapters.standalone.state_store import JsonStateStore
+        signal_script.value = "BUY"
+        mgr = PaperLiveManager(
+            strategies=_FakeStrategies(),
+            storage=_FakeStorage(_candles(60)),
+            state_store=JsonStateStore(str(tmp_path / "paper-live-manager.json")),
+            paper_factory=lambda iid: _FakePaper({"BTC": "0", "USDT": "10000"}),
+            auto_trading_checker=lambda: False,
+        )
+        inst = mgr.create_instance({
+            "venue_id": "binance", "symbol": "BTC/USDT",
+            "enabled": True, "auto_trading": True,
+        })
+        results = mgr.tick_all()
+        assert results[0]["status"] == "held"
+        assert results[0]["held_by"] == "global"
 
 
 class TestCheckRisk:
@@ -401,6 +499,7 @@ class TestPaperLiveManager:
             storage=storage,
             state_store=JsonStateStore(str(tmp_path / "paper-live-manager.json")),
             paper_factory=paper_factory,
+            auto_trading_checker=lambda: True,
         )
 
     def test_create_and_list(self, tmp_path):
@@ -484,6 +583,7 @@ class TestPaperLivePersistProdlike:
             state_store=manager_store,
             paper_factory=paper_factory,
             instance_state_store_factory=factory,
+            auto_trading_checker=lambda: True,
         )
         return mgr, manager_store, instance_stores
 
@@ -499,6 +599,7 @@ class TestPaperLivePersistProdlike:
             state_store=manager_store,
             paper_factory=paper_factory,
             instance_state_store_factory=lambda iid: instance_stores[iid],
+            auto_trading_checker=lambda: True,
         )
 
     def test_tick_runtime_state_survives_restart(self, signal_script):
@@ -506,7 +607,7 @@ class TestPaperLivePersistProdlike:
         mgr, manager_store, instance_stores = self._make_prodlike()
         inst = mgr.create_instance({
             "venue_id": "binance", "symbol": "BTC/USDT", "interval": "1h",
-            "enabled": True,
+            "enabled": True, "auto_trading": True,
         })
         iid = inst["instance_id"]
 
