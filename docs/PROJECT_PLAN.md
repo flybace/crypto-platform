@@ -3534,3 +3534,31 @@ Ubuntu `10.10.10.129` 当前运行 7 个 Crypto 容器，前端/后端绑定 `41
 本次前端只做了 vue-tsc 构建 + dev server 代码送达验证，未做浏览器截图。
 另修：`launch-all.sh` 的 kill 模式失效（start 脚本内 exec 导致 cmdline 无
 脚本路径），已改为按服务命令匹配。
+
+### 31.54 2026-10-05 策略×自动交易联动（漏斗 paper_approved 门禁）
+
+背景：用户要求"把策略与自动交易联动起来"，参照大A量化系统的晋级思路
+（策略评级→晋级→才能实盘）。此前自动交易两级开关与漏斗是脱节的：
+未评级策略也能打开自动交易。
+
+实现（分支 `codex/funnel-autotrade-link`，已合并推送到 main）：
+- `PaperLiveManager` 新增 `paper_eligibility_checker` 注入
+  `(strategy_id, params) -> (eligible, reason)`，默认放行；
+  `main.py` 接入 `app.state.strategy_funnel.check_paper_eligible`。
+- `update_instance`：显式 `auto_trading=True` 时要求策略+参数过
+  paper_approved，不过则 ValueError→API 422，提示回测页走
+  评分→复测→跨池验证→准入。
+- `update_instance`：策略/参数变更（=新版本）而新组合未过漏斗时，
+  自动把 `auto_trading` 置 False（安全方向），返回 `_notice` 给前端展示。
+- `create_instance`：建实例时就开自动交易的同样先过漏斗再落盘，无半创建。
+- 漏斗 key 是策略+参数哈希（不含品种），币池子实例自动继承父实例结论。
+- 前端：编辑器复选框注明需 paper_approved；保存时展示 `_notice`；
+  页面底部说明更新。
+
+验证：
+- 6 个新单元测试（TestFunnelAutoTradeLink），44/44 通过。
+- 生产 API 全链路：未评级实例开开关→422 带指引；测试策略
+  sma_cross+{probe:funnel-link} 走 submit→retested→cross_validated→
+  paper_approved（S 级）后开开关→200；改参数到未评级版本→自动关闭+notice；
+  测试实例已删除。漏斗里留了一条合成测试记录（sma_cross / probe:funnel-link，
+  S 级 paper_approved），非真实评级。

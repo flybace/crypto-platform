@@ -438,7 +438,7 @@ const saveLive = async () => {
       const { data } = await api.put<PaperLiveInstance>(`/paper/live/instances/${editingInstanceId.value}`, liveForm.value);
       const idx = liveInstances.value.findIndex((i) => i.instance_id === editingInstanceId.value);
       if (idx >= 0) liveInstances.value[idx] = data;
-      notice.value = '策略实例已更新';
+      notice.value = (data as any)._notice || '策略实例已更新';
     } else {
       const { data } = await api.post<PaperLiveInstance>('/paper/live/instances', liveForm.value);
       liveInstances.value.push(data);
@@ -704,13 +704,13 @@ onMounted(() => { loadData(); loadTradingPools(); });
         <label><span>持仓上限</span><input v-model="liveForm.max_position_ratio" type="number" min="0.01" max="1" step="0.05" title="持仓市值占总权益的最大比例" /></label>
         <label><span>止损 %</span><input v-model="liveForm.stop_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；如 0.05 表示浮亏 5% 强制平仓" /></label>
         <label><span>单日最大亏损 %</span><input v-model="liveForm.daily_max_loss_pct" type="number" min="0" max="0.5" step="0.01" title="0=关闭；超限则停牌至次日 UTC 0 点" /></label>
-        <label class="automation-check"><input v-model="liveForm.auto_trading" type="checkbox" /><span>自动交易（有信号自动下模拟单；还需账户页全局总开关同时打开，默认关闭）</span></label>
+        <label class="automation-check"><input v-model="liveForm.auto_trading" type="checkbox" /><span>自动交易（需策略通过准入漏斗 paper_approved；还需账户页全局总开关同时打开，默认关闭）</span></label>
         <button class="secondary-button" type="button" :disabled="liveSaving" @click="saveLive"><Save v-if="!liveSaving" :size="14" /><RefreshCw v-else :size="14" class="spinning" /><span>{{ liveSaving ? '保存中' : '保存' }}</span></button>
         <button v-if="editingInstanceId" class="secondary-button" type="button" @click="cancelEdit">取消</button>
       </div>
       
       <div v-if="liveResult" class="inline-notice" role="status"><Check :size="14" />{{ liveResult }}</div>
-      <p class="paper-note"><ShieldCheck :size="13" /> 每个策略独立运行、独立账户：引擎每 60 秒轮询所有已启动的策略，各自检查最新已收盘 K 线（每根 K 线最多一笔）。自动下单需要两级开关同时打开——本策略的"自动交易"和账户页的"自动交易"总开关；任一关闭时引擎只记录信号、不下单（含止损单）。只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p>
+      <p class="paper-note"><ShieldCheck :size="13" /> 每个策略独立运行、独立账户：引擎每 60 秒轮询所有已启动的策略，各自检查最新已收盘 K 线（每根 K 线最多一笔）。自动下单需要两级开关同时打开——本策略的"自动交易"和账户页的"自动交易"总开关；任一关闭时引擎只记录信号、不下单（含止损单）。开启自动交易要求策略+参数通过准入漏斗（paper_approved，评分→复测→跨池验证→准入）；改参数后视为新版本，会自动关闭自动交易，需重过漏斗。只写模拟账本，不连接真实 API Key，真实执行保持关闭。</p>
     </section>
     <section class="paper-metrics" aria-label="模拟盘摘要"><article><span>模拟净值</span><strong>{{ summary ? formatNumber(summary.equity_quote, 2) : '—' }}</strong><em>USDT</em></article><article><span>基础资产</span><strong>{{ positions.length }}</strong><em>有余额的币种</em></article><article><span>已提交订单</span><strong>{{ summary?.order_count ?? 0 }}</strong><em>模拟撮合记录</em></article><article><span>策略回放</span><strong>{{ summary?.strategy_run_count ?? strategyRuns.length }}</strong><em>历史样本运行</em></article><article><span>费率</span><strong>{{ summary?.fee_bps || '10' }}</strong><em>bps</em></article></section>
 
