@@ -449,6 +449,13 @@ def create_app(
             getattr(app.state, "trading_settings_store", None)
             and app.state.trading_settings_store.is_enabled()
         ),
+        # 策略×自动交易联动：开自动交易要求策略+参数已过准入漏斗 paper_approved
+        # （大A系统的晋级思路）。lambda 延迟求值，funnel 在后面初始化也不影响。
+        paper_eligibility_checker=lambda strategy_id, params: (
+            app.state.strategy_funnel.check_paper_eligible(strategy_id, params)
+            if getattr(app.state, "strategy_funnel", None) is not None
+            else (True, "funnel not configured")
+        ),
     )
     # 迁移旧单实例：首次运行时把 paper-live.json 导入为默认实例
     if not paper_live_manager.list_instances():

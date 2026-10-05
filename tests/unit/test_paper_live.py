@@ -559,6 +559,89 @@ class _PathlessStore:
         self._payload = deepcopy(payload)
 
 
+class TestFunnelAutoTradeLink:
+    """策略×自动交易联动：开自动交易要求策略+参数过准入漏斗 paper_approved。"""
+
+    def _make_manager(self, tmp_path, eligible):
+        from backend.app.services.paper_live import PaperLiveManager
+        from adapters.standalone.state_store import JsonStateStore
+
+        def checker(strategy_id, params):
+            if eligible(strategy_id, params):
+                return True, ""
+            return False, "no rating yet; run a backtest first"
+
+        return PaperLiveManager(
+            strategies=_FakeStrategies(),
+            storage=_FakeStorage(_candles(60)),
+            state_store=JsonStateStore(str(tmp_path / "paper-live-manager.json")),
+            paper_factory=lambda iid: _FakePaper({"BTC": "0", "USDT": "10000"}),
+            auto_trading_checker=lambda: True,
+            paper_eligibility_checker=checker,
+        )
+
+    def test_enable_requires_funnel(self, tmp_path):
+        mgr = self._make_manager(tmp_path, lambda sid, p: False)
+        inst = mgr.create_instance({"venue_id": "binance", "symbol": "BTC/USDT"})
+        with pytest.raises(ValueError, match="准入漏斗"):
+            mgr.update_instance(inst["instance_id"], {"auto_trading": True})
+        # 开关没被打开
+        assert mgr.get_instance(inst["instance_id"]).get_config()["auto_trading"] is False
+
+    def test_enable_ok_when_eligible(self, tmp_path):
+        mgr = self._make_manager(tmp_path, lambda sid, p: True)
+        inst = mgr.create_instance({"venue_id": "binance", "symbol": "BTC/USDT"})
+        updated = mgr.update_instance(inst["instance_id"], {"auto_trading": True})
+        assert updated["auto_trading"] is True
+
+    def test_param_change_auto_disables(self, tmp_path):
+        mgr = self._make_manager(tmp_path, lambda sid, p: p.get("v") == 1)
+        inst = mgr.create_instance({
+            "venue_id": "binance", "symbol": "BTC/USDT",
+            "strategy_parameters": {"v": 1},
+        })
+        iid = inst["instance_id"]
+        mgr.update_instance(iid, {"auto_trading": True})  # v1 过漏斗
+        # 改参数到未评级版本 → 自动关闭 + 提示
+        updated = mgr.update_instance(iid, {"strategy_parameters": {"v": 2}})
+        assert updated["auto_trading"] is False
+        assert "准入漏斗" in updated["_notice"]
+
+    def test_param_change_keeps_on_when_still_eligible(self, tmp_path):
+        mgr = self._make_manager(tmp_path, lambda sid, p: True)
+        inst = mgr.create_instance({
+            "venue_id": "binance", "symbol": "BTC/USDT",
+            "strategy_parameters": {"v": 1},
+        })
+        iid = inst["instance_id"]
+        mgr.update_instance(iid, {"auto_trading": True})
+        updated = mgr.update_instance(iid, {"strategy_parameters": {"v": 2}})
+        assert updated["auto_trading"] is True
+        assert "_notice" not in updated
+
+    def test_create_with_autotrading_checks_funnel(self, tmp_path):
+        mgr = self._make_manager(tmp_path, lambda sid, p: False)
+        with pytest.raises(ValueError, match="准入漏斗"):
+            mgr.create_instance({
+                "venue_id": "binance", "symbol": "BTC/USDT", "auto_trading": True,
+            })
+        assert mgr.list_instances() == []  # 无半创建状态
+
+    def test_default_checker_allows(self, tmp_path):
+        # 未接入漏斗时默认放行（旧调用方不受影响）
+        from backend.app.services.paper_live import PaperLiveManager
+        from adapters.standalone.state_store import JsonStateStore
+        mgr = PaperLiveManager(
+            strategies=_FakeStrategies(),
+            storage=_FakeStorage(_candles(60)),
+            state_store=JsonStateStore(str(tmp_path / "paper-live-manager.json")),
+            paper_factory=lambda iid: _FakePaper({"BTC": "0", "USDT": "10000"}),
+        )
+        inst = mgr.create_instance({"venue_id": "binance", "symbol": "BTC/USDT"})
+        updated = mgr.update_instance(inst["instance_id"], {"auto_trading": True})
+        assert updated["auto_trading"] is True
+
+
 class TestPaperLivePersistProdlike:
     """生产环境 state_store 没有 .path（SqlStateStore），实例运行时状态
     必须经由 instance_state_store_factory 落盘，否则 VM 重置后风控失忆

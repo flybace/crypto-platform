@@ -579,6 +579,7 @@ class PaperLiveManager:
         instance_state_store_factory=None,
         coin_pool_service=None,
         auto_trading_checker=None,
+        paper_eligibility_checker=None,
     ) -> None:
         self._strategies = strategies
         self._storage = storage
@@ -588,6 +589,11 @@ class PaperLiveManager:
         self._coin_pools = coin_pool_service
         # 全局自动交易开关读取函数，透传给每个策略实例
         self._auto_trading_checker = auto_trading_checker
+        # 策略准入漏斗检查函数 (strategy_id, params) -> (eligible, reason)。
+        # 未接入时默认放行（由调用方如 main.py 显式接入）。
+        self._paper_eligibility_checker = (
+            paper_eligibility_checker or (lambda strategy_id, params: (True, ""))
+        )
         # (instance_id) -> StateStore：实例运行时状态的持久化位置。
         # 生产环境的 state_store 是 SqlStateStore（没有 .path），无法再从
         # manager 路径派生实例文件，必须由调用方显式提供。
@@ -646,6 +652,24 @@ class PaperLiveManager:
                 pass
         return svc
 
+    def _check_paper_eligible(self, strategy_id: str, params: dict | None) -> tuple[bool, str]:
+        """查策略准入漏斗：是否达到 paper_approved（可自动交易）。
+
+        漏斗 key 是 strategy_id + 参数哈希——参数变了就是新版本，要重过漏斗。
+        """
+        eligible, reason = self._paper_eligibility_checker(
+            str(strategy_id or ""), dict(params or {})
+        )
+        return bool(eligible), str(reason or "")
+
+    def _require_paper_eligible(self, strategy_id: str, params: dict | None, *, action: str) -> None:
+        eligible, reason = self._check_paper_eligible(strategy_id, params)
+        if not eligible:
+            raise ValueError(
+                f"策略未通过准入漏斗，无法{action}：{reason}。"
+                "请先在回测页提交评级，按 评分→复测→跨池验证→准入 晋级到 paper_approved。"
+            )
+
     def list_instances(self) -> list[dict[str, Any]]:
         with self._lock:
             return [
@@ -666,6 +690,14 @@ class PaperLiveManager:
             svc = self._build_instance(instance_id)
             # 应用用户配置
             svc.update(values)
+            cfg = svc.get_config()
+            # 联动漏斗：建实例时就打开自动交易的，策略必须已过 paper_approved；
+            # 先检查再落盘，避免半创建状态。
+            if cfg.get("auto_trading"):
+                self._require_paper_eligible(
+                    cfg.get("strategy_id"), cfg.get("strategy_parameters"),
+                    action="创建并开启自动交易",
+                )
             self._instances[instance_id] = svc
             self._persist_locked()
             return {"instance_id": instance_id, **svc.get()}
@@ -750,9 +782,32 @@ class PaperLiveManager:
             svc = self._instances.get(instance_id)
             if svc is None:
                 raise KeyError(f"instance not found: {instance_id}")
+            current = svc.get_config()
+            new_strategy_id = values.get("strategy_id", current.get("strategy_id"))
+            new_params = values.get("strategy_parameters", current.get("strategy_parameters"))
+            strategy_changed = (
+                str(new_strategy_id or "") != str(current.get("strategy_id") or "")
+                or (new_params or {}) != (current.get("strategy_parameters") or {})
+            )
+            notice = None
+            if values.get("auto_trading") is True:
+                # 显式开启自动交易 → 策略（新参数版本）必须已过 paper_approved
+                self._require_paper_eligible(new_strategy_id, new_params, action="开启自动交易")
+            elif strategy_changed and current.get("auto_trading"):
+                # 策略/参数变更 = 新版本，需重过漏斗；先自动关闭自动交易（安全方向）
+                eligible, _ = self._check_paper_eligible(new_strategy_id, new_params)
+                if not eligible:
+                    values = {**values, "auto_trading": False}
+                    notice = (
+                        "策略/参数变更后为新版本，需重新通过准入漏斗，"
+                        "已自动关闭自动交易"
+                    )
             result = svc.update(values)
             self._persist_locked()
-            return {"instance_id": instance_id, **result}
+            payload = {"instance_id": instance_id, **result}
+            if notice:
+                payload["_notice"] = notice
+            return payload
 
     def delete_instance(self, instance_id: str) -> None:
         with self._lock:
