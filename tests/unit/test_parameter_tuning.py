@@ -173,3 +173,33 @@ class TestParameterTuner:
         assert validated
         assert all(e["overfit_guard_passed"] is True for e in validated)
         assert all(e["robust_score"] is not None for e in validated)
+
+    def test_validation_sort_survives_skipped_entries(self):
+        """Regression: skipped validation entries lack validation_* keys.
+
+        With more combos than validation_top_n, non-candidates are marked
+        "skipped" without validation_max_drawdown_pct; the final ranking
+        sort must not raise KeyError on them.
+        """
+        from datetime import datetime, timezone
+
+        class SplitManager(FakeManager):
+            def dataset_time_range(self, *, venue_id, symbol, interval):
+                start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+                end = datetime(2024, 4, 1, tzinfo=timezone.utc)
+                return (start, end)
+
+        tuner = ParameterTuner(SplitManager())
+        result = tuner.tune(
+            strategy_id="s1", venue_id="binance", symbol="BTC/USDT", interval="1d",
+            param_grids={"a": [1, 2, 3, 4]},
+            base_config=FakeConfig(),
+            validation_ratio=0.3,
+            validation_top_n=1,
+        )
+        assert result.total_combinations == 4
+        skipped = [e for e in result.ranked if e["validation_status"] == "skipped"]
+        assert len(skipped) == 3
+        assert all("validation_max_drawdown_pct" not in e for e in skipped)
+        assert result.best is not None
+        assert result.best["validation_status"] == "completed"
