@@ -174,8 +174,9 @@ class ParameterTuner:
         if split_at is not None:
             ranked.sort(
                 key=lambda r: (
-                    -(r["robust_score"] if r["robust_score"] is not None else math.inf),
-                    r["validation_max_drawdown_pct"] if r["validation_max_drawdown_pct"] is not None else math.inf,
+                    -(r["robust_score"] if r["robust_score"] is not None else -math.inf),
+                    r.get("validation_max_drawdown_pct")
+                    if r.get("validation_max_drawdown_pct") is not None else math.inf,
                 )
             )
         else:
