@@ -70,6 +70,7 @@ DEFAULT_LIVE: dict[str, Any] = {
 }
 
 TRADE_HISTORY_LIMIT = 50
+EQUITY_HISTORY_LIMIT = 20000  # 权益快照上限：约 14 天（按每分钟 1 个）
 DUST = Decimal("0.00000001")
 MIN_NOTIONAL = Decimal("5")
 
@@ -178,6 +179,131 @@ def decide_order(
     return None
 
 
+def _downsample_equity(
+    snapshots: list[dict[str, Any]], max_points: int
+) -> list[dict[str, str]]:
+    """桶平均降采样：把快照压到 max_points 个点以内，保证首尾点保留。"""
+    if not snapshots or max_points <= 0:
+        return []
+    if len(snapshots) <= max_points:
+        return [{"ts": s["ts"], "equity": s["equity"]} for s in snapshots]
+    bucket = len(snapshots) / max_points
+    out: list[dict[str, str]] = []
+    index = 0
+    while index < len(snapshots):
+        chunk = snapshots[index:int(index + bucket) or index + 1]
+        if not chunk:
+            break
+        total = sum(Decimal(str(s["equity"])) for s in chunk)
+        out.append({"ts": chunk[-1]["ts"], "equity": str(total / len(chunk))})
+        index += len(chunk)
+    # 首尾对齐
+    out[0] = {"ts": snapshots[0]["ts"], "equity": snapshots[0]["equity"]}
+    out[-1] = {"ts": snapshots[-1]["ts"], "equity": snapshots[-1]["equity"]}
+    return out
+
+
+def _equity_stats(snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    """从权益序列算收益与最大回撤（纯函数）。"""
+    if not snapshots:
+        return {
+            "initial_equity": None, "latest_equity": None,
+            "total_return_pct": None, "max_drawdown_pct": None,
+            "period_start": None, "period_end": None,
+        }
+    equities = [Decimal(str(s["equity"])) for s in snapshots]
+    initial, latest = equities[0], equities[-1]
+    total_return_pct = (
+        str((latest - initial) / initial * 100) if initial > 0 else None
+    )
+    peak = equities[0]
+    max_dd = Decimal("0")
+    for value in equities:
+        if value > peak:
+            peak = value
+        if peak > 0:
+            dd = (peak - value) / peak
+            if dd > max_dd:
+                max_dd = dd
+    return {
+        "initial_equity": str(initial),
+        "latest_equity": str(latest),
+        "total_return_pct": total_return_pct,
+        "max_drawdown_pct": str(max_dd * 100),
+        "period_start": snapshots[0]["ts"],
+        "period_end": snapshots[-1]["ts"],
+    }
+
+
+def _pair_round_trips(trades: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把 BUY→SELL 配成完整 round-trip 并算毛 PnL（只做多策略）。"""
+    closed: list[dict[str, Any]] = []
+    open_pos: dict[str, Any] | None = None
+    for trade in trades:
+        side = str(trade.get("side", "")).upper()
+        try:
+            qty = Decimal(str(trade.get("quantity", "0")))
+            price = Decimal(str(trade.get("filled_price") or "0"))
+        except (InvalidOperation, ValueError):
+            continue
+        if qty <= 0 or price <= 0:
+            continue
+        if side == "BUY" and open_pos is None:
+            open_pos = {"qty": qty, "price": price, "ts": trade.get("created_at")}
+        elif side == "SELL" and open_pos is not None:
+            # 按开仓数量结算（策略通常全仓进出）
+            settle_qty = min(qty, open_pos["qty"])
+            pnl = (price - open_pos["price"]) * settle_qty
+            closed.append({
+                "entry_ts": open_pos["ts"],
+                "exit_ts": trade.get("created_at"),
+                "qty": str(settle_qty),
+                "entry_price": str(open_pos["price"]),
+                "exit_price": str(price),
+                "pnl": str(pnl),
+            })
+            open_pos = None
+    return closed
+
+
+def _trade_stats(closed: list[dict[str, Any]]) -> dict[str, Any]:
+    """由已平仓 round-trip 算胜率/盈亏比/总 PnL。"""
+    if not closed:
+        return {
+            "round_trips": 0, "win_rate_pct": None,
+            "profit_factor": None, "total_pnl": "0",
+        }
+    pnls = [Decimal(str(c["pnl"])) for c in closed]
+    wins = sum(1 for p in pnls if p > 0)
+    gross_profit = sum((p for p in pnls if p > 0), Decimal("0"))
+    gross_loss = sum((-p for p in pnls if p < 0), Decimal("0"))
+    profit_factor = (
+        str(gross_profit / gross_loss) if gross_loss > 0
+        else ("Infinity" if gross_profit > 0 else None)
+    )
+    return {
+        "round_trips": len(closed),
+        "win_rate_pct": str(Decimal(wins) / len(closed) * 100),
+        "profit_factor": profit_factor,
+        "total_pnl": str(sum(pnls, Decimal("0"))),
+    }
+
+
+def _trades_with_pnl(
+    trades: list[dict[str, Any]], closed: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """给每笔成交标注其所属 round-trip 的 PnL（SELL 那笔带 pnl）。"""
+    by_exit_ts = {c["exit_ts"]: c for c in closed}
+    out = []
+    for trade in trades:
+        annotated = dict(trade)
+        match = by_exit_ts.get(trade.get("created_at"))
+        if match is not None and str(trade.get("side", "")).upper() == "SELL":
+            annotated["round_trip_pnl"] = match["pnl"]
+        out.append(annotated)
+    return out
+
+
 class PaperLiveService:
     """Own the live-loop configuration and per-candle trading state."""
 
@@ -189,6 +315,7 @@ class PaperLiveService:
         *,
         state_path: str | Path | None = None,
         state_store: StateStore | None = None,
+        equity_store: StateStore | None = None,
         regime_service=None,
         auto_trading_checker=None,
     ) -> None:
@@ -200,11 +327,14 @@ class PaperLiveService:
         # 保证开关语义：不显式接线就不下单。
         self._auto_trading_checker = auto_trading_checker or (lambda: False)
         self._state = state_store or (JsonStateStore(state_path) if state_path else None)
+        self._equity_store = equity_store
         self._config = deepcopy(DEFAULT_LIVE)
         self._trades: list[dict[str, Any]] = []
+        self._equity: list[dict[str, Any]] = []
         self._lock = RLock()
         self._state_mtime_ns = 0
         self._load()
+        self._load_equity()
 
     def get(self) -> dict[str, Any]:
         self._refresh_external()
@@ -238,6 +368,64 @@ class PaperLiveService:
         self._refresh_external()
         with self._lock:
             return deepcopy(self._config)
+
+    def _load_equity(self) -> None:
+        if self._equity_store is None:
+            return
+        try:
+            payload = self._equity_store.load({"version": 1, "snapshots": []})
+        except JsonStateError:
+            return
+        snapshots = payload.get("snapshots") if isinstance(payload, dict) else None
+        if isinstance(snapshots, list):
+            self._equity = snapshots[-EQUITY_HISTORY_LIMIT:]
+
+    def _record_equity_snapshot(self, price: Decimal) -> None:
+        """记录一笔权益快照。失败只记日志，不影响 tick 主流程。"""
+        if self._equity_store is None or price <= 0:
+            return
+        try:
+            venue = str(self._config.get("venue_id", "")).strip().lower()
+            symbol = str(self._config.get("symbol", "")).strip().upper()
+            base_asset, quote_asset = symbol.split("/")
+            balances = self._venue_balances(venue)
+            base_balance = _decimal(balances.get(base_asset, "0"), "base_balance")
+            quote_balance = _decimal(balances.get(quote_asset, "0"), "quote_balance")
+            equity = quote_balance + base_balance * price
+            snapshot = {
+                "ts": datetime.now(UTC).isoformat(),
+                "equity": str(equity),
+                "price": str(price),
+                "base_qty": str(base_balance),
+                "quote_qty": str(quote_balance),
+            }
+            with self._lock:
+                self._equity.append(snapshot)
+                del self._equity[:-EQUITY_HISTORY_LIMIT]
+                snapshots = deepcopy(self._equity)
+            self._equity_store.save({"version": 1, "snapshots": snapshots})
+        except Exception as error:
+            logger.warning("equity snapshot failed: %s", error)
+
+    def get_equity_history(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return deepcopy(self._equity)
+
+    def get_performance(self, *, max_points: int = 500) -> dict[str, Any]:
+        """聚合绩效：降采样权益曲线 + 统计 + 带 PnL 的成交。"""
+        with self._lock:
+            snapshots = deepcopy(self._equity)
+            trades = deepcopy(self._trades)
+        curve = _downsample_equity(snapshots, max_points)
+        stats = _equity_stats(snapshots)
+        closed = _pair_round_trips(trades)
+        stats.update(_trade_stats(closed))
+        return {
+            "equity_curve": curve,
+            "stats": stats,
+            "trades": _trades_with_pnl(trades, closed),
+            "snapshot_count": len(snapshots),
+        }
 
     def update(self, values: dict[str, Any]) -> dict[str, Any]:
         self._refresh_external()
@@ -309,10 +497,16 @@ class PaperLiveService:
         now_iso = datetime.now(UTC).isoformat()
 
         with self._lock:
-            if self._config["last_candle_time"] == candle_id:
+            is_repeat = self._config["last_candle_time"] == candle_id
+            if is_repeat:
                 self._config["last_tick_at"] = now_iso
                 self._persist_locked()
-                return {"status": "no_new_candle", "candle_time": candle_id}
+        # 无新 K 线也记权益快照：持仓随市价波动，曲线才连续。
+        # 放锁外做：快照内部自己加锁，避免 I/O 阻塞实例锁。
+        self._record_equity_snapshot(_decimal(candle.close, "close"))
+        if is_repeat:
+            return {"status": "no_new_candle", "candle_time": candle_id}
+        with self._lock:
             self._config["last_candle_time"] = candle_id
             self._config["last_tick_at"] = now_iso
 
@@ -583,6 +777,7 @@ class PaperLiveManager:
         coin_pool_service=None,
         auto_trading_checker=None,
         paper_eligibility_checker=None,
+        equity_store_factory=None,
     ) -> None:
         self._strategies = strategies
         self._storage = storage
@@ -601,6 +796,10 @@ class PaperLiveManager:
         # 生产环境的 state_store 是 SqlStateStore（没有 .path），无法再从
         # manager 路径派生实例文件，必须由调用方显式提供。
         self._instance_state_factory = instance_state_store_factory
+        # (instance_id) -> StateStore：实例权益快照的持久化位置。
+        # 未提供时，对 JsonStateStore 从实例状态路径派生 -equity.json；
+        # SqlStateStore 等无 path 的必须由调用方显式提供，否则不记快照。
+        self._equity_store_factory = equity_store_factory
         self._instances: dict[str, PaperLiveService] = {}
         self._lock = RLock()
         self._load()
@@ -613,6 +812,20 @@ class PaperLiveManager:
         # 从 manager 的 state 路径派生实例路径（仅 JsonStateStore 可用）
         base = self._state.path
         return JsonStateStore(str(base).replace("paper-live-manager.json", f"paper-live-{instance_id}.json"))
+
+    def _instance_equity_store(
+        self, instance_id: str, base_store: StateStore | None
+    ) -> StateStore | None:
+        """权益快照独立文件：与配置状态分离，避免单个 JSON 膨胀。
+
+        base_store 是该实例的状态 store（已由 _instance_state_store 产出），
+        这里只做路径派生，不再调 factory，避免重复副作用。
+        """
+        if self._equity_store_factory is not None:
+            return self._equity_store_factory(instance_id)
+        if base_store is not None and hasattr(base_store, "path"):
+            return JsonStateStore(str(base_store.path).replace(".json", "-equity.json"))
+        return None
 
     def _load(self) -> None:
         if self._state is None:
@@ -639,11 +852,13 @@ class PaperLiveManager:
 
     def _build_instance(self, instance_id: str, config: dict | None = None) -> PaperLiveService:
         paper = self._paper_factory(instance_id) if self._paper_factory else None
+        state_store = self._instance_state_store(instance_id)
         svc = PaperLiveService(
             paper,
             self._strategies,
             self._storage,
-            state_store=self._instance_state_store(instance_id),
+            state_store=state_store,
+            equity_store=self._instance_equity_store(instance_id, state_store),
             regime_service=self._regime,
             auto_trading_checker=self._auto_trading_checker,
         )
@@ -829,6 +1044,16 @@ class PaperLiveManager:
     def get_instance(self, instance_id: str) -> PaperLiveService | None:
         with self._lock:
             return self._instances.get(instance_id)
+
+    def get_instance_performance(
+        self, instance_id: str, *, max_points: int = 500
+    ) -> dict[str, Any]:
+        with self._lock:
+            svc = self._instances.get(instance_id)
+            if svc is None:
+                raise KeyError(f"instance not found: {instance_id}")
+        payload = svc.get_performance(max_points=max_points)
+        return {"instance_id": instance_id, **payload}
 
     def reset_instance_account(self, instance_id: str, balances: dict | None = None) -> dict[str, Any]:
         """重置指定实例的独立模拟账户为干净状态（默认纯 USDT）。"""

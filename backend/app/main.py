@@ -444,6 +444,11 @@ def create_app(
         instance_state_store_factory=lambda instance_id: domain_state(
             f"paper-live-{instance_id}.json"
         ),
+        # 实例权益快照（绩效看板的数据源）：独立键，与运行时状态分离，
+        # 避免快照量大拖慢每次 tick 的状态读写。
+        equity_store_factory=lambda instance_id: domain_state(
+            f"paper-live-{instance_id}-equity.json"
+        ),
         # 自动交易全局开关：设置页显式开启后才允许实例下单（与实例级开关做与门）
         auto_trading_checker=lambda: bool(
             getattr(app.state, "trading_settings_store", None)

@@ -743,3 +743,135 @@ class TestPaperLivePersistProdlike:
         assert cfg["day_start_equity"] == payload["live"]["day_start_equity"]
         assert cfg["last_candle_time"] == payload["live"]["last_candle_time"]
         assert cfg["trade_count"] == 1
+
+
+class TestPerformance:
+    """绩效看板：权益快照、降采样、统计、round-trip 配对。"""
+
+    def _snapshots(self, equities):
+        from datetime import UTC, datetime, timedelta
+        base = datetime(2026, 10, 8, tzinfo=UTC)
+        return [
+            {
+                "ts": (base + timedelta(minutes=i)).isoformat(),
+                "equity": str(e),
+                "price": "50000",
+                "base_qty": "0",
+                "quote_qty": str(e),
+            }
+            for i, e in enumerate(equities)
+        ]
+
+    def test_downsample_keeps_first_last_and_cap(self):
+        from backend.app.services.paper_live import _downsample_equity
+        snaps = self._snapshots([10000 + i * 10 for i in range(1000)])
+        out = _downsample_equity(snaps, 100)
+        assert len(out) <= 100
+        assert out[0]["ts"] == snaps[0]["ts"]
+        assert out[-1]["ts"] == snaps[-1]["ts"]
+        assert out[0]["equity"] == snaps[0]["equity"]
+        assert out[-1]["equity"] == snaps[-1]["equity"]
+
+    def test_downsample_passthrough_when_short(self):
+        from backend.app.services.paper_live import _downsample_equity
+        snaps = self._snapshots([10000, 10100, 10200])
+        out = _downsample_equity(snaps, 500)
+        assert len(out) == 3
+
+    def test_equity_stats_return_and_drawdown(self):
+        from backend.app.services.paper_live import _equity_stats
+        # 10000 -> 12000 (+20%) -> 回落到 9000（从 12000 回撤 25%）
+        stats = _equity_stats(self._snapshots([10000, 11000, 12000, 10000, 9000, 9500]))
+        assert stats["initial_equity"] == "10000"
+        assert stats["latest_equity"] == "9500"
+        assert Decimal(stats["total_return_pct"]) == pytest.approx(Decimal("-5"))
+        assert Decimal(stats["max_drawdown_pct"]) == pytest.approx(Decimal("25"))
+        assert stats["period_start"] is not None
+        assert stats["period_end"] is not None
+
+    def test_equity_stats_empty(self):
+        from backend.app.services.paper_live import _equity_stats
+        stats = _equity_stats([])
+        assert stats["total_return_pct"] is None
+        assert stats["max_drawdown_pct"] is None
+
+    def test_pair_round_trips_pnl(self):
+        from backend.app.services.paper_live import _pair_round_trips
+        trades = [
+            {"side": "BUY", "quantity": "0.2", "filled_price": "50000",
+             "created_at": "2026-10-08T01:00:00+00:00"},
+            {"side": "SELL", "quantity": "0.2", "filled_price": "55000",
+             "created_at": "2026-10-08T02:00:00+00:00"},
+        ]
+        closed = _pair_round_trips(trades)
+        assert len(closed) == 1
+        assert Decimal(closed[0]["pnl"]) == pytest.approx(Decimal("1000"))
+
+    def test_pair_round_trips_unpaired_buy_ignored(self):
+        from backend.app.services.paper_live import _pair_round_trips
+        trades = [
+            {"side": "BUY", "quantity": "0.2", "filled_price": "50000",
+             "created_at": "2026-10-08T01:00:00+00:00"},
+        ]
+        assert _pair_round_trips(trades) == []
+
+    def test_trade_stats_win_rate_profit_factor(self):
+        from backend.app.services.paper_live import _pair_round_trips, _trade_stats
+        trades = [
+            {"side": "BUY", "quantity": "1", "filled_price": "100",
+             "created_at": "2026-10-08T01:00:00+00:00"},
+            {"side": "SELL", "quantity": "1", "filled_price": "120",
+             "created_at": "2026-10-08T02:00:00+00:00"},
+            {"side": "BUY", "quantity": "1", "filled_price": "100",
+             "created_at": "2026-10-08T03:00:00+00:00"},
+            {"side": "SELL", "quantity": "1", "filled_price": "90",
+             "created_at": "2026-10-08T04:00:00+00:00"},
+        ]
+        stats = _trade_stats(_pair_round_trips(trades))
+        assert stats["round_trips"] == 2
+        assert Decimal(stats["win_rate_pct"]) == pytest.approx(Decimal("50"))
+        # 盈利 20 / 亏损 10 = 2
+        assert Decimal(stats["profit_factor"]) == pytest.approx(Decimal("2"))
+        assert Decimal(stats["total_pnl"]) == pytest.approx(Decimal("10"))
+
+    def test_get_performance_shape(self):
+        from backend.app.services.paper_live import PaperLiveService
+        svc = PaperLiveService(
+            _FakePaper({"BTC": "0", "USDT": "10000"}),
+            _FakeStrategies(),
+            _FakeStorage(_candles(200)),
+            state_store=None,
+            equity_store=None,
+        )
+        svc._equity = self._snapshots([10000, 10500, 10300])
+        svc._trades = [
+            {"side": "BUY", "quantity": "0.2", "filled_price": "50000",
+             "created_at": "2026-10-08T01:00:00+00:00", "candle_time": "t1"},
+            {"side": "SELL", "quantity": "0.2", "filled_price": "52000",
+             "created_at": "2026-10-08T02:00:00+00:00", "candle_time": "t2"},
+        ]
+        perf = svc.get_performance()
+        assert len(perf["equity_curve"]) == 3
+        assert Decimal(perf["stats"]["total_return_pct"]) == pytest.approx(Decimal("3"))
+        assert perf["stats"]["round_trips"] == 1
+        assert perf["snapshot_count"] == 3
+        # SELL 那笔带 round_trip_pnl 标注
+        sell = [t for t in perf["trades"] if t["side"] == "SELL"][0]
+        assert Decimal(sell["round_trip_pnl"]) == pytest.approx(Decimal("400"))
+
+    def test_tick_records_equity_snapshot(self, signal_script):
+        paper = _FakePaper({"BTC": "0", "USDT": "10000"})
+        svc = _service(paper, _FakeStorage(_candles(200)))
+        # 注入内存 equity store
+        from backend.app.services.paper_live import JsonStateStore
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as tmp:
+            svc._equity_store = JsonStateStore(os.path.join(tmp, "equity.json"))
+            svc._load_equity()
+            result = svc.tick()
+            assert result["status"] in ("traded", "held", "checked", "no_new_candle", "skipped")
+            history = svc.get_equity_history()
+            assert len(history) >= 1
+            snap = history[-1]
+            assert Decimal(snap["equity"]) > 0
+            assert Decimal(snap["price"]) > 0
