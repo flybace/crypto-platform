@@ -238,7 +238,8 @@ const loadData = async () => {
     const [summaryResponse, orderResponse, coverageResponse, strategyRunResponse, strategyResponse, automationResponse, followResponse, liveResponse] = await Promise.all([
       api.get<PaperSummary>('/paper/summary'),
       api.get<{ items: PaperOrder[] }>('/paper/orders'),
-      api.get<HistoryCoverage>('/history/coverage'),
+      // 历史覆盖率接口可能超时/挂起（如后端扫描大数据目录），不能拖死整个模拟盘页面
+      api.get<HistoryCoverage>('/history/coverage').catch(() => null),
       api.get<{ items: any[] }>('/paper/strategy-runs'),
       api.get<{ items: StrategyDefinition[] }>('/strategies/catalog'),
       api.get<PaperAutomation>('/paper/automation'),
@@ -249,7 +250,7 @@ const loadData = async () => {
     orders.value = orderResponse.data.items;
     strategyRuns.value = strategyRunResponse.data.items;
     strategies.value = strategyResponse.data.items;
-    datasets.value = coverageResponse.data.datasets;
+    datasets.value = coverageResponse?.data.datasets || [];
     automationForm.value = automationResponse.data;
     automationForm.value.strategy_parameters = Object.fromEntries(
       Object.entries(automationForm.value.strategy_parameters || {}).map(([key, value]) => [key, String(value ?? '')]),
