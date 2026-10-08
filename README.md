@@ -6,6 +6,17 @@
 
 > ⚠️ 安全底线：服务端执行模式固定为 `DISABLED`，真实下单路径不可达；所有自动下单都发生在**模拟账户**。详见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md) §4。
 
+## 界面预览
+
+![交易大屏](docs/images/dashboard.png)
+*数据大屏：KPI、组合权益曲线、策略盈亏排行*
+
+![模拟盘](docs/images/paper-trading.png)
+*模拟盘：多策略实例、市场状态风控、每个实例可点「绩效」看权益曲线*
+
+![全市场行情](docs/images/market.png)
+*Binance / OKX / Bybit 三所行情并排对比*
+
 ## 一键安装
 
 需要 [Docker](https://docs.docker.com/get-docker/)（Windows 用 Docker Desktop）：
