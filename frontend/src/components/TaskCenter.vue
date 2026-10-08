@@ -33,6 +33,45 @@ const formatDate = (value: string) => new Date(value).toLocaleString('zh-CN', { 
 const formatJson = (value: unknown) => JSON.stringify(value, null, 2);
 const setFilter = (value: 'all' | 'active' | 'failed' | 'completed') => { filter.value = value; };
 
+const ACTIVE_STATUSES = ['queued', 'running', 'cancelling', 'open', 'accepted', 'partially_filled'];
+const activeTasks = computed(() => tasks.value.filter((t) => ACTIVE_STATUSES.includes(t.status)));
+
+// 统一进度解析：返回百分比(0-100)、文字标签、是否为不确定进度
+const progressInfo = (task: PlatformTask): { pct: number | null; label: string; indeterminate: boolean } => {
+  const p = task.progress || {};
+  const num = (v: unknown): number | null => {
+    const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN;
+    return Number.isFinite(n) ? n : null;
+  };
+  const completed = num(p.completed);
+  const total = num(p.total);
+  if (completed !== null && total !== null && total > 0) {
+    const pct = Math.min(100, Math.max(0, (completed / total) * 100));
+    return { pct, label: `${completed} / ${total}`, indeterminate: false };
+  }
+  const filled = num(p.filled_quantity);
+  const qty = num(p.quantity);
+  if (filled !== null && qty !== null && qty > 0) {
+    const pct = Math.min(100, Math.max(0, (filled / qty) * 100));
+    return { pct, label: `${filled} / ${qty}`, indeterminate: false };
+  }
+  const pctRaw = num(p.percent ?? p.progress_pct ?? p.ratio);
+  if (pctRaw !== null) {
+    const pct = pctRaw <= 1 ? pctRaw * 100 : pctRaw;
+    return { pct: Math.min(100, Math.max(0, pct)), label: `${pct.toFixed(1)}%`, indeterminate: false };
+  }
+  // 运行中但无明确进度：显示不确定动画条
+  if (ACTIVE_STATUSES.includes(task.status)) {
+    return { pct: null, label: statusLabel(task.status), indeterminate: true };
+  }
+  return { pct: null, label: '—', indeterminate: false };
+};
+const progressBarClass = (task: PlatformTask): string => {
+  if (['failed', 'partial', 'blocked', 'cancelled', 'rejected', 'interrupted', 'dead_lettered'].includes(task.status)) return 'bar-fail';
+  if (['completed', 'filled'].includes(task.status)) return 'bar-done';
+  return 'bar-run';
+};
+
 const loadTasks = async (silent = false) => {
   if (!silent) loading.value = true;
   error.value = '';
@@ -121,8 +160,38 @@ onBeforeUnmount(() => {
     <section class="page-heading task-heading"><div><p class="kicker">ORCHESTRATION / 10</p><h1 id="task-title">任务中心</h1><p class="muted">统一查看历史下载、筛选、回测和模拟订单的当前状态。</p></div><button class="icon-button" type="button" title="刷新任务" aria-label="刷新任务" :disabled="loading" @click="loadTasks()"><RefreshCw :size="17" :class="{ spinning: loading }" /></button></section>
     <div v-if="error" class="inline-error" role="alert">{{ error }}</div>
     <section class="task-metrics" aria-label="任务摘要"><article><span>全部</span><strong>{{ summary.total }}</strong><em>最近任务</em></article><article><span>运行中</span><strong class="positive">{{ summary.active }}</strong><em>排队或执行</em></article><article><span>异常</span><strong class="negative">{{ summary.failed }}</strong><em>失败或阻断</em></article><article><span>完成</span><strong>{{ summary.completed }}</strong><em>已归档状态</em></article></section>
+
+    <!-- 正在运行：大进度条卡片 -->
+    <section v-if="activeTasks.length" class="running-panel" aria-label="正在运行的任务">
+      <div class="section-heading"><div><p class="kicker">NOW RUNNING</p><h2>正在运行 <em>{{ activeTasks.length }}</em></h2></div></div>
+      <div class="running-grid">
+        <article v-for="task in activeTasks" :key="task.task_id" class="running-card" @click="selectTask(task)">
+          <div class="running-top">
+            <div class="running-title"><strong>{{ task.label }}</strong><span>{{ kindLabel(task.kind) }} · {{ statusLabel(task.status) }}</span></div>
+            <div class="running-actions" @click.stop>
+              <button v-if="task.cancellable" class="icon-button" type="button" title="停止任务" aria-label="停止任务" :disabled="actionLoading === task.task_id" @click="cancelTask(task)"><CircleStop :size="14" /></button>
+            </div>
+          </div>
+          <div class="progress-track big">
+            <i v-if="!progressInfo(task).indeterminate" :class="progressBarClass(task)" :style="{ width: (progressInfo(task).pct ?? 0).toFixed(1) + '%' }"></i>
+            <i v-else class="bar-indeterminate"></i>
+          </div>
+          <div class="running-meta">
+            <span class="progress-text">{{ progressInfo(task).label }}</span>
+            <span v-if="progressInfo(task).pct !== null" class="progress-pct">{{ progressInfo(task).pct!.toFixed(1) }}%</span>
+            <time>{{ formatDate(task.updated_at) }}</time>
+          </div>
+        </article>
+      </div>
+    </section>
     <div class="task-tabs" role="tablist" aria-label="任务筛选"><button v-for="item in taskFilters" :key="item.value" type="button" :class="{ active: filter === item.value }" @click="setFilter(item.value)">{{ item.label }}</button></div>
-    <section class="task-panel" aria-labelledby="task-list-title"><div class="section-heading"><div><p class="kicker">TASK LEDGER</p><h2 id="task-list-title">任务记录</h2></div><span class="section-meta">{{ filtered.length }} ITEMS</span></div><div v-if="!filtered.length" class="empty-state"><ListChecks :size="22" /><p>暂无匹配任务</p></div><div v-else class="task-list"><article v-for="task in filtered" :key="task.task_id" class="task-row" :class="{ selected: selectedTaskId === task.task_id }" tabindex="0" @click="selectTask(task)" @keydown.enter="selectTask(task)"><span class="task-icon" :class="task.status"><CheckCircle2 v-if="['completed', 'filled'].includes(task.status)" :size="15" /><CircleAlert v-else-if="['failed', 'partial', 'blocked', 'cancelled', 'rejected', 'interrupted', 'dead_lettered'].includes(task.status)" :size="15" /><Timer v-else :size="15" /></span><div class="task-main"><div><strong>{{ task.label }}</strong><span>{{ kindLabel(task.kind) }}</span></div><small>{{ task.task_id }}</small></div><div class="task-progress"><span v-if="task.progress.completed !== undefined">{{ task.progress.completed }} / {{ task.progress.total }}</span><span v-else-if="task.progress.filled_quantity !== undefined">{{ task.progress.filled_quantity }} / {{ task.progress.quantity }}</span><span v-else>—</span></div><span class="task-status" :class="task.status">{{ statusLabel(task.status) }}</span><time>{{ formatDate(task.updated_at) }}</time><div class="task-actions"><button v-if="task.cancellable" class="icon-button" type="button" title="停止任务" aria-label="停止任务" :disabled="actionLoading === task.task_id" @click.stop="cancelTask(task)"><CircleStop :size="14" /></button><button v-if="task.retryable" class="icon-button" type="button" title="重试任务" aria-label="重试任务" :disabled="actionLoading === task.task_id" @click.stop="retryTask(task)"><RotateCcw :size="14" /></button></div></article></div></section>
+    <section class="task-panel" aria-labelledby="task-list-title"><div class="section-heading"><div><p class="kicker">TASK LEDGER</p><h2 id="task-list-title">任务记录</h2></div><span class="section-meta">{{ filtered.length }} ITEMS</span></div><div v-if="!filtered.length" class="empty-state"><ListChecks :size="22" /><p>暂无匹配任务</p></div><div v-else class="task-list"><article v-for="task in filtered" :key="task.task_id" class="task-row" :class="{ selected: selectedTaskId === task.task_id }" tabindex="0" @click="selectTask(task)" @keydown.enter="selectTask(task)"><span class="task-icon" :class="task.status"><CheckCircle2 v-if="['completed', 'filled'].includes(task.status)" :size="15" /><CircleAlert v-else-if="['failed', 'partial', 'blocked', 'cancelled', 'rejected', 'interrupted', 'dead_lettered'].includes(task.status)" :size="15" /><Timer v-else :size="15" /></span><div class="task-main"><div><strong>{{ task.label }}</strong><span>{{ kindLabel(task.kind) }}</span></div><small>{{ task.task_id }}</small></div><div class="task-progress">
+            <div class="progress-track">
+              <i v-if="!progressInfo(task).indeterminate" :class="progressBarClass(task)" :style="{ width: (progressInfo(task).pct ?? 0).toFixed(1) + '%' }"></i>
+              <i v-else class="bar-indeterminate"></i>
+            </div>
+            <span class="progress-text">{{ progressInfo(task).label }}<template v-if="progressInfo(task).pct !== null"> · {{ progressInfo(task).pct!.toFixed(0) }}%</template></span>
+          </div><span class="task-status" :class="task.status">{{ statusLabel(task.status) }}</span><time>{{ formatDate(task.updated_at) }}</time><div class="task-actions"><button v-if="task.cancellable" class="icon-button" type="button" title="停止任务" aria-label="停止任务" :disabled="actionLoading === task.task_id" @click.stop="cancelTask(task)"><CircleStop :size="14" /></button><button v-if="task.retryable" class="icon-button" type="button" title="重试任务" aria-label="重试任务" :disabled="actionLoading === task.task_id" @click.stop="retryTask(task)"><RotateCcw :size="14" /></button></div></article></div></section>
   <section v-if="selectedTaskId" class="task-detail-panel" aria-labelledby="task-detail-title"><div class="section-heading"><div><p class="kicker">TASK DETAIL</p><h2 id="task-detail-title">任务详情</h2></div><button class="icon-button" type="button" title="关闭任务详情" aria-label="关闭任务详情" @click="closeDetail"><X :size="15" /></button></div><div v-if="detailLoading" class="detail-loading"><RefreshCw :size="17" class="spinning" /> 正在读取任务详情</div><template v-else-if="selectedTaskDetail"><div class="detail-summary"><article><span>类型</span><strong>{{ kindLabel(selectedTaskDetail.task.kind) }}</strong></article><article><span>状态</span><strong :class="selectedTaskDetail.task.status === 'completed' ? 'positive' : ['failed', 'blocked', 'partial', 'cancelled', 'interrupted', 'rejected', 'dead_lettered'].includes(selectedTaskDetail.task.status) ? 'negative' : 'warn'">{{ statusLabel(selectedTaskDetail.task.status) }}</strong></article><article><span>进度</span><strong>{{ selectedTaskDetail.task.progress.completed ?? '—' }} / {{ selectedTaskDetail.task.progress.total ?? '—' }}</strong></article><article><span>更新时间</span><strong>{{ formatDate(selectedTaskDetail.task.updated_at) }}</strong></article></div><div v-if="selectedTaskDetail.ledger?.error && Object.keys(selectedTaskDetail.ledger.error).length" class="detail-error" role="alert">{{ String(selectedTaskDetail.ledger.error.message || '任务执行失败') }}</div><div class="detail-columns"><section><div class="detail-subheading"><strong>结果</strong><span>{{ selectedTaskDetail.ledger?.finished_at ? formatDate(selectedTaskDetail.ledger.finished_at) : '尚未结束' }}</span></div><pre>{{ formatJson(selectedTaskDetail.detail) }}</pre></section><section><div class="detail-subheading"><strong>生命周期事件</strong><span>{{ selectedTaskDetail.events.length }}</span></div><div class="event-list"><div v-for="event in selectedTaskDetail.events" :key="event.event_id" class="event-row"><span>{{ event.event_type }}</span><time>{{ formatDate(event.created_at) }}</time><small>{{ event.message }}</small></div><div v-if="!selectedTaskDetail.events.length" class="event-empty">暂无持久化事件</div></div></section></div></template></section>
   </section>
 </template>
@@ -142,7 +211,7 @@ onBeforeUnmount(() => {
 .task-tabs button.active { border-bottom-color: var(--cyan); color: var(--cyan); }
 .task-panel { min-width: 0; border: 1px solid var(--line); border-radius: var(--radius); padding: 24px 20px 13px; background: var(--panel); }
 .task-list { display: grid; border-top: 1px solid var(--line); }
-.task-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 100px 82px 160px auto; align-items: center; gap: 12px; min-height: 64px; border-bottom: 1px solid var(--line); cursor: pointer; outline: none; }
+.task-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) 140px 82px 160px auto; align-items: center; gap: 12px; min-height: 64px; border-bottom: 1px solid var(--line); cursor: pointer; outline: none; }
 .task-row:hover, .task-row:focus-visible, .task-row.selected { background: var(--panel-soft); }
 .task-icon { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--line-bright); color: var(--amber); }
 .task-icon.completed, .task-icon.filled { color: var(--cyan); border-color: #42645d; }
@@ -151,7 +220,34 @@ onBeforeUnmount(() => {
 .task-main div { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
 .task-main strong { overflow: hidden; color: var(--ink); font-size: 12px; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
 .task-main span, .task-main small, .task-row time { overflow: hidden; color: var(--dim); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.task-progress { color: var(--muted); font: 10px Consolas, monospace; text-align: right; }
+.task-progress { color: var(--muted); font: 10px Consolas, monospace; text-align: right; display: grid; gap: 4px; }
+.progress-track { height: 6px; border-radius: 3px; background: rgba(120,135,132,.18); overflow: hidden; position: relative; }
+.progress-track.big { height: 10px; border-radius: 5px; }
+.progress-track i { display: block; height: 100%; border-radius: 3px; transition: width .4s ease; }
+.progress-track i.bar-run { background: linear-gradient(90deg, var(--cyan), #4da3ff); }
+.progress-track i.bar-done { background: var(--cyan); }
+.progress-track i.bar-fail { background: var(--red); }
+.progress-track i.bar-indeterminate { position: absolute; top: 0; left: 0; width: 40%; background: linear-gradient(90deg, transparent, var(--amber), transparent); animation: indeterminate-slide 1.4s ease-in-out infinite; }
+@keyframes indeterminate-slide { 0% { left: -40%; } 100% { left: 100%; } }
+.progress-text { white-space: nowrap; }
+.progress-pct { color: var(--cyan); font-weight: 600; }
+
+/* 正在运行卡片 */
+.running-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; background: var(--panel); }
+.running-panel .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.running-panel .kicker { margin: 0; font-size: 10px; letter-spacing: .18em; color: var(--cyan); }
+.running-panel h2 { margin: 2px 0 0; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.running-panel h2 em { font-style: normal; color: var(--amber); font-size: 13px; }
+.running-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.running-card { border: 1px solid var(--line-bright); border-radius: 8px; padding: 14px; background: var(--panel-soft); cursor: pointer; display: grid; gap: 10px; transition: border-color .2s; }
+.running-card:hover { border-color: var(--cyan); }
+.running-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.running-title { display: grid; gap: 3px; min-width: 0; }
+.running-title strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.running-title span { color: var(--dim); font-size: 10px; }
+.running-actions { display: flex; gap: 4px; }
+.running-meta { display: flex; align-items: center; gap: 10px; font-size: 10px; color: var(--muted); font-family: Consolas, monospace; }
+.running-meta time { margin-left: auto; color: var(--dim); }
 .task-status { justify-self: start; padding: 5px 7px; color: var(--muted); background: #222a2a; font-size: 9px; }
 .task-status.completed, .task-status.filled { color: var(--cyan); background: rgba(108, 229, 208, .1); }
 .task-status.failed, .task-status.partial, .task-status.blocked, .task-status.cancelled, .task-status.rejected, .task-status.interrupted, .task-status.dead_lettered { color: var(--red); background: rgba(238, 129, 120, .1); }
