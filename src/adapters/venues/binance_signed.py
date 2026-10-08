@@ -77,6 +77,12 @@ class BinanceSignedRestClient:
             raise PublicRestError("FORBIDDEN", "binance API key lacks permission", status_code=403)
         if response.status_code == 429:
             raise PublicRestError("RATE_LIMITED", "binance rate limit reached", status_code=429)
+        if response.status_code == 451:
+            raise PublicRestError(
+                "GEO_RESTRICTED",
+                "binance blocked this server region (HTTP 451); the API key was not tested",
+                status_code=451,
+            )
         if 400 <= response.status_code < 500:
             raise PublicRestError(
                 "UPSTREAM_REJECTED", "binance rejected the request", status_code=response.status_code
