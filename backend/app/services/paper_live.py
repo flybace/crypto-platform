@@ -24,6 +24,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+import logging
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -34,6 +35,8 @@ from application.history_storage import HistoryStorage
 
 from .paper_trading import PaperTradingService
 from .strategy_registry import StrategyRegistry
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_LIVE: dict[str, Any] = {
@@ -856,4 +859,13 @@ class PaperLiveManager:
                 results.append({"instance_id": instance_id, **outcome})
             except Exception as error:
                 results.append({"instance_id": instance_id, "status": "tick_failed", "error": str(error)})
+        # tick 只落盘各实例文件；manager 快照若不更新，
+        # paper-live-manager.json 的 last_tick_at / last_candle_time 等
+        # 会一直停留在上次 create/update 的时刻。引擎每轮同步一次，
+        # 快照落盘失败只记日志，不影响 tick 结果本身。
+        try:
+            with self._lock:
+                self._persist_locked()
+        except Exception as error:
+            logger.warning("paper live manager snapshot persist failed: %s", error)
         return results

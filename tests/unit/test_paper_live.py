@@ -533,6 +533,38 @@ class TestPaperLiveManager:
         assert len(results) == 1
         assert results[0]["status"] == "disabled"
 
+    def test_tick_all_refreshes_manager_snapshot(self, tmp_path):
+        """tick_all 后 manager 快照文件必须同步实例的最新运行时状态。
+
+        此前 manager 文件只在 create/update/delete 时落盘，last_tick_at 会
+        过期数天（线上曾过期 34 小时+），而各实例文件每分钟都在更新。
+        """
+        import json
+        from datetime import datetime
+        from backend.app.services.paper_live import PaperLiveManager
+        from adapters.standalone.state_store import JsonStateStore
+        mgr = PaperLiveManager(
+            strategies=_FakeStrategies(),
+            storage=_FakeStorage(_candles(60)),
+            state_store=JsonStateStore(str(tmp_path / "paper-live-manager.json")),
+            paper_factory=lambda instance_id: _FakePaper({"BTC": "0", "USDT": "10000"}),
+        )
+        inst = mgr.create_instance({"venue_id": "okx", "symbol": "BTC/USDT", "enabled": True})
+        iid = inst["instance_id"]
+        results = mgr.tick_all()
+        assert len(results) == 1
+        assert results[0]["instance_id"] == iid
+        payload = json.loads((tmp_path / "paper-live-manager.json").read_text())
+        snap = payload["instances"][iid]
+        tick_at = snap["last_tick_at"]
+        assert tick_at is not None
+        age = (datetime.now(UTC) - datetime.fromisoformat(tick_at)).total_seconds()
+        assert age < 120
+        # 与实例文件保持一致
+        inst_payload = json.loads((tmp_path / f"paper-live-{iid}.json").read_text())
+        assert inst_payload["live"]["last_tick_at"] == tick_at
+        assert inst_payload["live"]["last_candle_time"] == snap["last_candle_time"]
+
     def test_instances_isolated(self, tmp_path):
         mgr = self._make_manager(tmp_path)
         a = mgr.create_instance({"venue_id": "okx", "symbol": "BTC/USDT", "enabled": True})
