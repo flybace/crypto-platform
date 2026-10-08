@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { AlertTriangle, BriefcaseBusiness, Check, CircleDollarSign, FlaskConical, Play, RefreshCw, RotateCcw, Save, Send, ShieldCheck, Square } from 'lucide-vue-next';
 import { api } from '../api';
+import PaperPerformance from './PaperPerformance.vue';
 import type { HistoryCoverage, HistoryDataset, PaperAccountSummary, PaperAutomation, PaperFollowConfig, PaperFollowSnapshot, PaperFollowState, PaperLiveConfig, PaperLiveInstance, PaperOrder, PaperSummary, QueuedTaskResponse, StrategyDefinition } from '../types';
 import { isQueuedTask, resolveTaskResponse, taskStatusLabel } from '../services/taskPolling';
 
@@ -75,6 +76,11 @@ const loadTradingPools = async () => {
 };
 const poolName = (poolId: string | null) => tradingPools.value.find((p) => p.pool_id === poolId)?.name || poolId || '';
 const showLiveEditor = ref(false);
+const perfInstance = ref<PaperLiveInstance | null>(null);
+const perfTitle = (inst: PaperLiveInstance) =>
+  `${inst.venue_id} ${inst.symbol} ${inst.interval} ${inst.strategy_id}`;
+const openPerformance = (inst: PaperLiveInstance) => { perfInstance.value = inst; };
+const closePerformance = () => { perfInstance.value = null; };
 const liveForm = ref<PaperLiveConfig>({
   enabled: false,
   auto_trading: false,
@@ -675,6 +681,7 @@ onMounted(() => { loadData(); loadTradingPools(); });
                 <button v-else class="danger-button" type="button" :disabled="liveSaving" @click="setInstanceEnabled(inst, false)">停止</button>
                 <button class="secondary-button" type="button" :disabled="liveRunning || !inst.enabled" @click="runInstance(inst)">执行</button>
                 <button class="secondary-button" type="button" @click="editInstance(inst)">编辑</button>
+                <button class="secondary-button" type="button" @click="openPerformance(inst)" title="收益曲线、回撤、胜率与成交 PnL">绩效</button>
                 <button class="secondary-button" type="button" :disabled="liveSaving" @click="resetInstanceAccount(inst)" title="重置为纯 USDT 10000">重置账户</button>
                 <button class="danger-button" type="button" :disabled="liveSaving" @click="deleteInstance(inst)">删除</button>
               </td>
@@ -734,7 +741,13 @@ onMounted(() => { loadData(); loadTradingPools(); });
       </div>
       <div v-else class="empty-state compact"><RefreshCw :size="18" class="spinning" /><p>正在读取账户</p></div>
     </section>
-    
+
+    <PaperPerformance
+      v-if="perfInstance"
+      :instance-id="perfInstance.instance_id"
+      :title="perfTitle(perfInstance)"
+      @close="closePerformance"
+    />
   </section>
 </template>
 

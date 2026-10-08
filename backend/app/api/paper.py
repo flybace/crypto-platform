@@ -334,6 +334,25 @@ def run_live_instance(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 
+@router.get("/live/instances/{instance_id}/performance")
+def instance_performance(
+    instance_id: str,
+    request: Request,
+    _: object = Depends(require_user),
+    max_points: int = 500,
+) -> dict[str, object]:
+    """实例绩效：降采样权益曲线 + 收益/回撤/胜率统计 + 带 PnL 的成交。"""
+    manager = request.app.state.paper_live_manager
+    try:
+        return manager.get_instance_performance(
+            instance_id, max_points=max(50, min(int(max_points), 2000))
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="instance not found")
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
 # 兼容旧单实例 API（已废弃，前端不再使用）
 @router.put("/live")
 def update_live(
