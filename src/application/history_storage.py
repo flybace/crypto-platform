@@ -62,6 +62,25 @@ class HistoryStorage:
         self._lock = RLock()
         self._file_lock_depth = 0
         self._file_lock_handle: BinaryIO | None = None
+        # (mtime_ns, size) recorded after a dataset's content SHA-256 matched its
+        # manifest. Lets repeated list/read calls skip re-hashing large files
+        # while any modification still forces a fresh verification.
+        self._verified_content: dict[str, tuple[int, int]] = {}
+
+    def _verify_data_hash(self, data_path: Path, manifest: DatasetManifest, storage_key: str) -> None:
+        """Fail closed when dataset content diverges from its manifest.
+
+        The full SHA-256 is recomputed only when the file's mtime/size changed
+        since the last successful verification, so listing or reading hundreds
+        of MB of history stays cheap while tampering is still detected.
+        """
+        stat = data_path.stat()
+        marker = (stat.st_mtime_ns, stat.st_size)
+        if self._verified_content.get(storage_key) == marker:
+            return
+        if hashlib.sha256(data_path.read_bytes()).hexdigest() != manifest.content_sha256:
+            raise HistoryStorageError(f"history data hash mismatch: {data_path.name}")
+        self._verified_content[storage_key] = marker
 
     @contextmanager
     def locked(self):
@@ -121,6 +140,8 @@ class HistoryStorage:
                 json.dumps(self._manifest_payload(manifest), ensure_ascii=False, indent=2, sort_keys=True).encode("utf-8")
                 + b"\n",
             )
+            # The file changed: force the next list/read to re-verify its hash.
+            self._verified_content.pop(self._storage_key(path), None)
             return StoredDataset(manifest=manifest, storage_key=self._storage_key(path))
 
     def list_datasets(self) -> tuple[StoredDataset, ...]:
@@ -136,9 +157,9 @@ class HistoryStorage:
                 data_path = Path(str(manifest_path)[: -len(".manifest.json")])
                 if not data_path.exists():
                     raise HistoryStorageError(f"history data is missing: {data_path.name}")
-                if hashlib.sha256(data_path.read_bytes()).hexdigest() != manifest.content_sha256:
-                    raise HistoryStorageError(f"history data hash mismatch: {data_path.name}")
-                records.append(StoredDataset(manifest=manifest, storage_key=self._storage_key(data_path)))
+                storage_key = self._storage_key(data_path)
+                self._verify_data_hash(data_path, manifest, storage_key)
+                records.append(StoredDataset(manifest=manifest, storage_key=storage_key))
             return tuple(sorted(records, key=lambda item: item.manifest.dataset_id))
 
     def coverage(self) -> dict[str, object]:
@@ -203,8 +224,7 @@ class HistoryStorage:
         with self.locked():
             if not data_path.exists():
                 raise HistoryStorageError(f"history data is missing: {data_path.name}")
-            if hashlib.sha256(data_path.read_bytes()).hexdigest() != manifest.content_sha256:
-                raise HistoryStorageError(f"history data hash mismatch: {data_path.name}")
+            self._verify_data_hash(data_path, manifest, dataset.storage_key)
             candles = self._read_csv(data_path, query)
         lower = self._normalize_bound(start_at, "start_at") if start_at is not None else manifest.start_at
         upper = self._normalize_bound(end_at, "end_at") if end_at is not None else manifest.end_at
