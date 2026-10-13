@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -103,6 +104,41 @@ from web.market_status import MarketStatusView  # noqa: E402
 from ports.market_archive import MarketArchive  # noqa: E402
 
 
+def _start_task_log_reconcile(task_store) -> dict:
+    """Verify task-log archives without blocking application startup.
+
+    The reconcile does a full sha256 re-verification of every archived task
+    log (grows with history; ~4 minutes at 203MB/49k files in Oct 2026). It
+    used to run synchronously inside create_app(), leaving /health
+    unresponsive after every reboot even though the process was alive.
+
+    Runs it on a daemon thread instead; the verify itself is unchanged
+    (fail-closed: corrupt entries are still marked, exceptions are captured
+    here and logged, never raised into startup). Set
+    CRYPTO_TASK_LOG_RECONCILE_SYNC=1 to run synchronously (tests/debug).
+    Returns a handle dict; attach it to app.state for observability.
+    """
+    log = logging.getLogger("crypto_platform.task_log")
+    if os.environ.get("CRYPTO_TASK_LOG_RECONCILE_SYNC") == "1":
+        return {"mode": "sync", "summary": task_store.reconcile_event_archives()}
+
+    handle: dict = {"mode": "background", "done": False}
+
+    def _run() -> None:
+        try:
+            handle["summary"] = task_store.reconcile_event_archives()
+        except Exception as exc:  # noqa: BLE001 - must not kill the process
+            handle["error"] = repr(exc)
+            log.exception("background task-log reconcile failed")
+        finally:
+            handle["done"] = True
+
+    thread = threading.Thread(target=_run, name="task-log-reconcile", daemon=True)
+    handle["thread"] = thread
+    thread.start()
+    return handle
+
+
 def create_app(
     settings: Settings | None = None,
     market_data: MarketDataService | None = None,
@@ -160,7 +196,7 @@ def create_app(
     )
     runtime_state_root = Path(runtime_history_service.storage.root) / ".runtime"
     task_store.event_archive = TaskLogArchive(runtime_state_root / "task-logs")
-    task_store.reconcile_event_archives()
+    task_log_reconcile = _start_task_log_reconcile(task_store)
     task_log_lifecycle = TaskLogArchiveLifecycle(
         task_store.event_archive,
         retention_days=runtime_settings.task_log_retention_days,
@@ -305,6 +341,7 @@ def create_app(
     )
     app.state.task_store = task_store
     app.state.task_log_archive = task_store.event_archive
+    app.state.task_log_reconcile = task_log_reconcile
     app.state.task_log_lifecycle = task_log_lifecycle
     app.state.task_log_backup_path = task_log_backup_path
     app.state.task_log_restore_path = task_log_restore_path
